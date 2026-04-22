@@ -44,3 +44,11 @@ class LinearRegression:
     def mse(self, X, y):
         y_pred = self.predict(X)
         return np.mean((y_pred - y)**2)
+    
+    def fit_normal_equation(self, X, y):
+        # θ = (XᵀX)⁻¹Xᵀy
+        X_b = np.c_[np.ones((X.shape[0], 1)), X]  # add bias column
+        theta = np.linalg.inv(X_b.T @ X_b) @ X_b.T @ y
+        self.bias    = theta[0]
+        self.weights = theta[1:]
+        return self
