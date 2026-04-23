@@ -600,7 +600,7 @@ Violations don't make the model useless, but they affect the reliability of infe
 
 ## 📚 Further Reading
 
-- [CS229 Lecture Notes — Linear Regression](https://cs229.stanford.edu/notes/) — Stanford's gold-standard derivation of the cost function and gradient descent
+- [CS229 Lecture Notes — Linear Regression](https://cs229.stanford.edu/main_notes.pdf) — Stanford's gold-standard derivation of the cost function and gradient descent
 - [Mathematics for ML — Chapter 9](https://mml-book.github.io/) — Rigorous linear regression from a linear algebra perspective
 - [StatQuest — Linear Regression](https://www.youtube.com/@statquest) — Best visual explanation of R², p-values, and assumptions
 - [3Blue1Brown — Essence of Calculus](https://www.3blue1brown.com/topics/calculus) — Visual intuition for derivatives and gradients
