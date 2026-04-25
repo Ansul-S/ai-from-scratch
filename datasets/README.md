@@ -2,6 +2,5 @@
 
 | File | Rows | Used in | Source |
 |------|------|---------|--------|
-| insurance.csv | 1338 | Linear Regression | Kaggle (CC0) |
-| iris.csv | 150 | KNN, Decision Tree | UCI |
-| diabetes.csv | 768 | Logistic Regression | UCI |
+| insurance.csv | 1338 | Linear Regression (Project 1) | https://www.kaggle.com/datasets/mirichoi0218/insurance |
+| hour.csv (Bike Sharing) | 17379 | Polynomial Regression (Project 2) | https://www.kaggle.com/datasets/lakshmi25npathi/bike-sharing-dataset |
