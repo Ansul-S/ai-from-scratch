@@ -1,63 +1,85 @@
 import numpy as np
-
-
-class LinearRegression:
-
-    def __init__(self, learning_rate=0.01, n_iterations=1000):
-        self.learning_rate = learning_rate
-        self.n_iterations = n_iterations
-        self.weights = None
-        self.bias = None
-        self.loss_history = []
-
-    def fit(self, X, y, l2=0.0):
-        n_samples, n_features = X.shape
-        self.weights = np.zeros(n_features)
-        self.bias = 0
-
-        for _ in range(self.n_iterations):
-            y_pred = X @ self.weights + self.bias
-            error  = y_pred - y
-
-            dw = (1 / n_samples) * X.T @ error + (l2 * self.weights)
-            db = (1 / n_samples) * np.sum(error)
-
-            self.weights = self.weights - self.learning_rate * dw
-            self.bias    = self.bias    - self.learning_rate * db
-
-            self.loss_history.append(self.mse(X, y))
-
-        return self
-
-    def predict(self, X):
-        return X @ self.weights + self.bias
-
-    def score(self, X, y):
-        y_pred = self.predict(X)
-        ss_res = np.sum((y - y_pred) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        return 1 - (ss_res / ss_tot)
-
-    def mse(self, X, y):
-        y_pred = self.predict(X)
-        return np.mean((y_pred - y) ** 2)
-
-    def fit_normal_equation(self, X, y):
-        X_b   = np.c_[np.ones((X.shape[0], 1)), X]
-        theta = np.linalg.inv(X_b.T @ X_b) @ X_b.T @ y
-        self.bias    = theta[0]
-        self.weights = theta[1:]
-        return self
-
+from itertools import combinations
+from sklearn.linear_model import Ridge as SklearnLinearRegression
 
 class PolynomialFeatures:
-
     def __init__(self, degree=2):
         self.degree = degree
 
-    def fit_transform(self, X, feature_idx=0):
-        X_poly = X.copy()
+    def fit_transform(self, X):
+        n_samples, n_features = X.shape
+        cols = [X]
+
         for d in range(2, self.degree + 1):
-            new_col = X[:, feature_idx] ** d
-            X_poly  = np.c_[X_poly, new_col]
-        return X_poly
+            cols.append(X ** d)
+
+            if d == 2:
+                for i, j in combinations(range(n_features), 2):
+                    interaction = X[:, i] * X[:, j]
+                    cols.append(interaction.reshape(-1, 1))
+
+        return np.hstack(cols)
+    
+class StandardScaler:
+    def __init__(self):
+        self.mean_ = None
+        self.std_ = None
+
+    def fit(self, X):
+        """
+        Learn mean and std from training data
+        """
+        X = np.array(X)
+        self.mean_ = np.mean(X, axis=0)
+        self.std_ = np.std(X, axis=0)
+
+        # Avoid division by zero
+        self.std_ = np.where(self.std_ == 0, 1, self.std_)
+
+        return self
+
+    def transform(self, X):
+        """
+        Apply scaling using learned parameters
+        """
+        X = np.array(X)
+        return (X - self.mean_) / self.std_
+    
+    def fit_transform(self, X):
+        """
+        Fit + transform (used during training)
+        """
+        self.fit(X)
+        return self.transform(X)
+    
+    def inverse_transform(self, X):
+        """
+        Convert scaled data back to original scale
+        """
+        if self.mean_ is None or self.std_ is None:
+            raise ValueError("Scaler has not been fitted yet.")
+
+        X = np.array(X)
+        return (X * self.std_) + self.mean_
+
+class PolynomialRegression:
+    def __init__(self, degree=2):
+        self.degree = degree
+        self.poly = PolynomialFeatures(degree=degree)
+        self.scaler = StandardScaler()
+        self.model = SklearnLinearRegression(alpha=0.1)
+
+    def fit(self, X, y):
+        X_poly = self.poly.fit_transform(X)
+        X_scaled = self.scaler.fit_transform(X_poly)
+        self.model.fit(X_scaled, y)
+
+    def predict(self, X):
+        X_poly = self.poly.fit_transform(X)   # expand features
+        X_scaled = self.scaler.transform(X_poly)  # use learned scaling
+        return self.model.predict(X_scaled)
+    
+    def score(self, X, y):
+        X_poly = self.poly.fit_transform(X)
+        X_scaled = self.scaler.transform(X_poly)
+        return self.model.score(X_scaled, y)
