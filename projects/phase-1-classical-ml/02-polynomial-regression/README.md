@@ -753,8 +753,8 @@ for degree in [1, 2, 3, 5, 10]:
 
 **What you'll observe:**
 
-| Degree | # Coefficients | Max |coef| | Behaviour |
-|--------|---------------|------------|-----------|
+| Degree | Coefficients | Max Coef | Behaviour |
+|--------|-------------|----------|-----------|
 | 1 | 6 | ~50 | Stable, interpretable |
 | 2 | 27 | ~60 | Still reasonable |
 | 3 | 54 | ~80 | Slightly inflated |
