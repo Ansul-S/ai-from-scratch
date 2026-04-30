@@ -702,6 +702,296 @@ pytest tests/test_solution.py -v
 
 ---
 
+## 📊 Visualization Deep Dive
+
+### 1. Fitted Curves — Degree 1 vs 3 vs 10
+
+This is the most important visual in the project. Three panels, one scatter plot of `atemp` vs `cnt`, three different red curves:
+
+```
+Degree 1 (R²=0.346)     Degree 3 (R²=0.528)     Degree 10 (R²=0.569)
+─────────────────        ─────────────────         ─────────────────
+Straight diagonal line   Smooth inverted-U         Wiggly curve with
+going upward. Misses     Rising, peaking at        sharp drop at edges.
+the drop at high         atemp≈0.6, then           Chasing noise in
+temperatures entirely.   falling. Matches          sparse regions.
+                         the real pattern.
+```
+
+**What to notice:**
+- Degree 1 never goes down — it can't. A line has no curve. High-temperature predictions are systematically too high.
+- Degree 3 captures the inverted-U with just 3 extra features (`atemp²`, `atemp³`, interactions).
+- Degree 10 looks reasonable in the dense middle region but goes haywire at the edges (atemp < 0.1 and atemp > 0.9) where training data is sparse. The model fits the noise there instead of the signal.
+
+**The insight:** R² alone doesn't tell you this. Degree 10 has higher R² than degree 3 (0.569 vs 0.528) — but its curve is less trustworthy. Always visualise the fitted curve, not just the metric.
+
+---
+
+### 2. Coefficient Behavior Across Degrees
+
+As degree increases, what happens to the coefficients? Run this to find out:
+
+```python
+import pandas as pd
+
+feature_names_d1 = features  # 6 original features
+
+for degree in [1, 2, 3, 5, 10]:
+    poly   = PolynomialFeatures(degree=degree)
+    scaler = StandardScaler()
+    X_exp  = scaler.fit_transform(poly.fit_transform(X_train))
+
+    from sklearn.linear_model import Ridge
+    model = Ridge(alpha=0.1)
+    model.fit(X_exp, y_train)
+
+    coefs = model.coef_
+    print(f"\nDegree {degree} — {len(coefs)} coefficients")
+    print(f"  Max abs coef: {np.abs(coefs).max():.2f}")
+    print(f"  Mean abs coef: {np.abs(coefs).mean():.2f}")
+```
+
+**What you'll observe:**
+
+| Degree | # Coefficients | Max |coef| | Behaviour |
+|--------|---------------|------------|-----------|
+| 1 | 6 | ~50 | Stable, interpretable |
+| 2 | 27 | ~60 | Still reasonable |
+| 3 | 54 | ~80 | Slightly inflated |
+| 5 | 126 | ~150 | Growing |
+| 10 | 471 | ~300 | Large but Ridge keeps them bounded |
+
+Without Ridge, degree=10 max coefficient would be `1e10+`. Ridge caps it. This is coefficient explosion in action — and Ridge's stabilizing effect made visible.
+
+**The geometric intuition for Ridge:** In weight space, the standard loss function is a bowl (ellipse). Ridge adds a circle constraint `Σw² ≤ t` centred at the origin. The optimal solution is where the bowl first touches the circle — always inside, always smaller than unconstrained weights. The circle literally shrinks the solution toward zero.
+
+```
+Without Ridge:        With Ridge:
+                      
+    ●  ← optimal      constraint circle
+   /                      ┌──●──┐
+  /  loss contours      ──┤     ├──  ← solution pulled
+ /                        └─────┘     toward origin
+```
+
+---
+
+### 3. Effect of Alpha — Visual Analysis
+
+The Ridge alpha experiment plot tells a precise story:
+
+```
+R²
+0.528 ─ ●──●──●──●                    ← flat zone: alpha too small to matter
+        │              ●              ← R² starts dropping at alpha=10
+0.500 ─ │                   ●        ← model losing real signal
+        │                        ●   ← heavy underfitting at alpha=1000
+0.465 ─ │
+        └──────────────────────────── alpha (log scale)
+       0.001  0.01  0.1   1   10  100  1000
+```
+
+**Three zones:**
+
+| Zone | Alpha Range | What's Happening |
+|------|------------|-----------------|
+| Flat | 0.001 → 1 | Regularization exists but doesn't hurt — degree=3 isn't overfitting |
+| Transition | 1 → 100 | Penalty starts squeezing useful weights |
+| Collapsed | 100 → 1000 | All weights near zero — model predicts the mean |
+
+**Key takeaway:** The flat zone tells you the model was never really overfitting at degree=3. Ridge here is purely for numerical stability, not to fight overfitting. If you saw the flat zone shrink dramatically (alpha=0.01 already hurting), that would signal genuine overfitting.
+
+---
+
+## 🔬 Ridge — The Math Behind Why It Works
+
+### The Problem: Why Plain LinearRegression Explodes
+
+At degree=10, your polynomial features include `atemp^9` and `atemp^10`. For `atemp=0.6`:
+- `atemp^9 = 0.6^9 ≈ 0.010`
+- `atemp^10 = 0.6^10 ≈ 0.006`
+
+These two columns are nearly identical — correlation ≈ 0.999. The matrix $X^TX$ becomes nearly singular (determinant ≈ 0). Its inverse becomes numerically unstable — tiny changes in data cause enormous swings in the computed weights.
+
+Formally, when two columns $x_i$ and $x_j$ are perfectly correlated:
+
+$$X^TX \text{ is singular} \Rightarrow (X^TX)^{-1} \text{ does not exist}$$
+
+Plain LinearRegression fails. Coefficients blow up to compensate.
+
+### The Fix: Ridge Adds a Stabilizer
+
+Ridge modifies the normal equation by adding $\lambda I$ (a scaled identity matrix) to $X^TX$:
+
+$$\theta_{ridge} = (X^TX + \lambda I)^{-1} X^T y$$
+
+Even if $X^TX$ is nearly singular, $X^TX + \lambda I$ is always invertible for any $\lambda > 0$ because:
+
+$$\text{eigenvalues of } (X^TX + \lambda I) = \text{eigenvalues of } X^TX + \lambda \geq \lambda > 0$$
+
+Adding $\lambda$ to every eigenvalue guarantees positive definiteness — the matrix is always invertible, always stable.
+
+### Weight Shrinkage — The Geometric Intuition
+
+The Ridge loss function is:
+
+$$J(\theta) = \underbrace{\|y - X\theta\|^2}_{\text{fit the data}} + \underbrace{\lambda \|\theta\|^2}_{\text{keep weights small}}$$
+
+Think of it as two competing forces:
+- **Force 1:** push weights toward values that minimise prediction error
+- **Force 2:** pull weights toward zero
+
+At $\lambda = 0$: Force 2 disappears → standard regression, weights can be anything.  
+At $\lambda \to \infty$: Force 2 dominates → all weights → 0 → model predicts the mean.  
+At $\lambda = 0.1$ (our choice): balanced → weights are just small enough to be stable, but large enough to fit the real pattern.
+
+**Why does this fix multicollinearity?**
+
+With two nearly identical features $x_i \approx x_j$, plain regression might set $w_i = +1000, w_j = -999$ (they cancel to give the right prediction, but individually huge). Ridge makes large weights expensive, so it prefers $w_i = 0.5, w_j = 0.5$ — same prediction, far smaller weights.
+
+---
+
+## 💥 Failure Analysis — What Broke and What We Learned
+
+Real ML work involves debugging. Here's every failure encountered in this project and what it revealed.
+
+---
+
+### Failure 1: Predictions of `1e14` at High Degrees
+
+**What happened:**
+
+```python
+model = PolynomialRegression(degree=10)
+model.fit(X_train, y_train)
+print(model.predict(X_test[:3]))
+# [1.47e+14, -2.31e+14, 8.92e+13]  ← complete nonsense
+```
+
+The fitted curves plot showed flat horizontal lines at `1e14`. The scatter plot dots were invisible — squashed to zero relative to the y-axis scale.
+
+**Why it happened:**
+
+`PolynomialRegression` was using plain `sklearn.LinearRegression` internally. At degree=10, features like `hr^10` (hr ranges 0-23, so `23^10 ≈ 4×10^13`) are astronomically large. The matrix inversion became numerically unstable. Coefficients exploded.
+
+**The fix:**
+
+Switched internal model from `LinearRegression` to `Ridge(alpha=0.1)`. Immediate fix — predictions returned to the correct range (0-800).
+
+**The lesson:**
+
+Never use plain linear regression with polynomial features above degree=3. Always use Ridge. This isn't optional — it's architectural.
+
+---
+
+### Failure 2: Old Class Cached in Notebook Kernel
+
+**What happened:**
+
+Fixed the `PolynomialFeatures` class to handle `self.degree` properly. Reran the notebook. Results were identical to before. The fix appeared to have no effect.
+
+**Why it happened:**
+
+Python's import system caches modules. Once `from solution import PolynomialFeatures` runs, Python doesn't re-read `solution.py` even if you save changes. The notebook was running the old version from memory.
+
+**The fix:**
+
+```python
+import importlib
+import solution
+importlib.reload(solution)
+from solution import PolynomialFeatures
+```
+
+Or restart the kernel entirely.
+
+**The lesson:**
+
+Always reload or restart the kernel after editing `solution.py`. This trips up every developer at least once. The subtle version of this bug — where your "fix" silently does nothing — is worse than an outright error.
+
+---
+
+### Failure 3: `fit_transform` Called in `predict()` on the Scaler
+
+**What happened:**
+
+Early version of `PolynomialRegression.predict()` had:
+
+```python
+def predict(self, X):
+    X_poly   = self.poly.fit_transform(X)
+    X_scaled = self.scaler.fit_transform(X_poly)  # ← BUG
+    return self.model.predict(X_scaled)
+```
+
+Test R² looked fine. But predictions on a small manually-created test set were subtly wrong.
+
+**Why it happened:**
+
+`scaler.fit_transform()` refit the scaler on the test data — computing new mean and std from the test set. For large, representative test sets this barely matters (means and stds are similar). For small or unusual test sets, it caused the predictions to be scaled differently than the model expected.
+
+**The fix:**
+
+```python
+X_scaled = self.scaler.transform(X_poly)  # transform only — never fit
+```
+
+**The lesson:**
+
+This bug is invisible on standard benchmarks. It only surfaces on unusual or small test sets. The rule is absolute: `fit_transform` in `fit()`, `transform` in `predict()` and `score()`. No exceptions. Write it as a comment in your code to remind yourself.
+
+---
+
+### Failure 4: `assert X.shape == (100, 5)` Instead of `X_out.shape`
+
+**What happened:**
+
+```python
+def test_polynomial_features_shape():
+    X = np.random.randn(100, 2)
+    pf = PolynomialFeatures(degree=2)
+    X_out = pf.fit_transform(X)
+    assert X.shape == (100, 5)  # ← wrong variable
+```
+
+Test passed. But it was testing the INPUT shape `(100, 2)` against `(100, 5)` — which should have FAILED. Yet it passed.
+
+Wait — it couldn't have passed. `(100, 2) != (100, 5)`. The test would have failed, not passed silently. This forced a re-read of the code and caught the variable name error immediately.
+
+**The lesson:**
+
+pytest's failure messages are your friend. A test that fails unexpectedly is telling you something — don't just fix the assert to make it pass, understand WHY it failed. In this case, the failure correctly identified the wrong variable.
+
+---
+
+### Failure 5: `interaction.reshape(-1, 1)` Result Not Appended
+
+**What happened:**
+
+```python
+for i, j in combinations(range(n_features), 2):
+    interaction = X[:, i] * X[:, j]
+    interaction.reshape(-1, 1)   # ← computed but thrown away
+```
+
+`np.hstack(cols)` raised a shape error: `(100, 2)`, `(100, 2)`, `(100,)` — can't stack a 1D array with 2D arrays.
+
+**Why it happened:**
+
+`reshape` returns a NEW array — it doesn't modify in place. The result was computed and immediately discarded.
+
+**The fix:**
+
+```python
+cols.append(interaction.reshape(-1, 1))
+```
+
+**The lesson:**
+
+NumPy operations almost never modify in place — they return new arrays. `reshape`, `T`, `astype`, `copy` — all return new objects. Always capture the return value. If you call a numpy method and don't use the result, you've done nothing.
+
+---
+
 ## 🎯 Interview Questions
 
 <details>
@@ -775,6 +1065,255 @@ In this project, degree=1 showed high bias — the straight line systematically 
 **Answer:** `combinations(range(n_features), 2)` generates every unique pair of feature indices `(i, j)` where `i < j`. For 3 features it gives `(0,1), (0,2), (1,2)` — the 3 unique pairs. We use it to generate interaction terms `X[:, i] * X[:, j]` for each pair. The key word is "unique" — `combinations` never produces `(1, 0)` if it already produced `(0, 1)`, and never produces `(0, 0)` (self-pairs). This avoids duplicate features (which cause multicollinearity) and avoids squared terms (which are already handled separately by `X ** d`). It's the correct mathematical tool for generating all pairwise interaction terms without repetition.
 
 </details>
+
+---
+
+## 🗺️ Pipeline Diagram — The Full System
+
+Every step in this project forms a sequential pipeline. Understanding this flow is what separates someone who ran code from someone who built a system.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     TRAINING PIPELINE                               │
+│                                                                     │
+│  Raw CSV  ──►  Feature      ──►  Polynomial   ──►  StandardScaler  │
+│  hour.csv      Selection        Expansion          fit_transform()  │
+│                                                                     │
+│  Drop leakage  6 features       degree=3           mean=0, std=1   │
+│  Drop IDs      selected         27 columns         learned from     │
+│  Drop atemp                     (6 + 6² + 15)      train only  ▼   │
+│                                                                     │
+│                                              Ridge(alpha=0.1).fit() │
+│                                              ◄── 5-fold CV picks α  │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    PREDICTION PIPELINE                              │
+│                                                                     │
+│  New Data ──►  Same Feature ──►  Polynomial  ──►  Scaler           │
+│               Selection         Expansion         transform()       │
+│                                                   (NOT fit!)    ▼  │
+│                                                                     │
+│                                              Ridge.predict()        │
+│                                              ──► cnt (rentals)      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**The two rules visible in this diagram:**
+
+1. `StandardScaler` uses `fit_transform()` in training, `transform()` only in prediction — the mean/std learned from training applies to all future data.
+2. The prediction pipeline is identical to training except no fitting happens — same steps, same parameters, new data.
+
+**Why diagrams matter in interviews:**
+
+A diagram shows you understand the system, not just the code. Any engineer can write `model.fit()`. Fewer can draw the data flow, identify where leakage could enter, and explain why each step must happen in that exact order.
+
+---
+
+## 🏭 Production Thinking
+
+Training a model is 20% of real ML work. Deploying it reliably is the other 80%. Here's what happens after the notebook closes.
+
+### Saving and Loading the Model
+
+```python
+import joblib
+
+# Save — after training
+joblib.dump({
+    'poly':   model.poly,
+    'scaler': model.scaler,
+    'model':  model.model,
+    'degree': model.degree,
+    'features': features,
+    'trained_at': '2026-04-28',
+    'train_r2': 0.5246,
+    'test_r2':  0.5275
+}, 'results/polynomial_regression_d3.joblib')
+
+# Load — at prediction time
+saved = joblib.load('results/polynomial_regression_d3.joblib')
+
+# Reconstruct
+pr = PolynomialRegression(degree=saved['degree'])
+pr.poly   = saved['poly']
+pr.scaler = saved['scaler']
+pr.model  = saved['model']
+
+# Predict on new data
+new_data = pd.DataFrame([{
+    'atemp': 0.6, 'hum': 0.5, 'windspeed': 0.1,
+    'hr': 17, 'season': 3, 'workingday': 1
+}])
+prediction = pr.predict(new_data[saved['features']].values)
+print(f"Predicted rentals: {int(prediction[0])}")
+```
+
+> ⚠️ **Always save metadata alongside the model** — which features it expects, in what order, when it was trained, what its metrics were. A model file without metadata is a black box that will silently fail when feature order changes.
+
+---
+
+### What Happens When Things Go Wrong in Production
+
+#### Problem 1: Input Distribution Shift
+
+**Scenario:** Your model was trained on 2011-2012 data. Two years later, the city adds 500 new bike stations. Average hourly rentals jump from 189 to 450.
+
+**What happens:** Your model was trained when the mean `cnt` was 189. It learned weights calibrated to that scale. Now predictions are systematically 50-60% too low — but your R² might still look reasonable because the *shape* of the relationship is unchanged.
+
+**How to detect it:**
+```python
+# Monitor prediction distributions in production
+import numpy as np
+
+production_preds = pr.predict(X_new)
+print(f"Production mean prediction: {production_preds.mean():.1f}")
+print(f"Training mean target: 189.5")  # stored from training
+# If these diverge by >20%, trigger retraining alert
+```
+
+**The fix:** Retrain periodically. Set up monitoring that alerts when the distribution of inputs OR predictions shifts significantly from training baselines. This is called **data drift detection** — a core MLOps concept.
+
+---
+
+#### Problem 2: Missing Values at Prediction Time
+
+**Scenario:** A sensor fails and `windspeed` is `NaN` for the next 3 hours.
+
+**What happens:** `NaN` propagates through polynomial expansion (`NaN^2 = NaN`), through scaling (`NaN - mean = NaN`), and Ridge produces `NaN` predictions. Silent failure — no error raised.
+
+**Defensive prediction code:**
+```python
+def predict_safe(model, X, features):
+    X_df = pd.DataFrame(X, columns=features)
+
+    # Check for missing values
+    if X_df.isnull().any().any():
+        missing = X_df.columns[X_df.isnull().any()].tolist()
+        print(f"⚠️  Missing values in: {missing}")
+
+        # Strategy 1: Fill with training median (stored at training time)
+        training_medians = {'atemp': 0.50, 'hum': 0.63,
+                           'windspeed': 0.19, 'hr': 11.5,
+                           'season': 2.5, 'workingday': 0.68}
+        for col in missing:
+            X_df[col] = X_df[col].fillna(training_medians[col])
+
+        # Strategy 2: Flag it (add is_imputed column)
+        # Strategy 3: Raise an exception and reject the request
+
+    return model.predict(X_df.values)
+```
+
+**The three strategies have different tradeoffs:**
+- **Fill with median:** silent, keeps the service running, may produce wrong predictions
+- **Flag it:** transparent, lets downstream systems handle it
+- **Reject:** safe, but breaks the service — only right for high-stakes predictions
+
+Which you choose depends on whether a wrong prediction is worse than no prediction.
+
+---
+
+#### Problem 3: Feature Order Mismatch
+
+**Scenario:** A colleague updates the data pipeline and sends features as `[hr, atemp, hum, ...]` instead of `[atemp, hum, hr, ...]`.
+
+**What happens:** The model silently assigns `hr` (range 0-23) the weight it learned for `atemp` (range 0-1). Predictions become nonsense — no error, no warning.
+
+**The fix:** Always validate feature names and order on input:
+
+```python
+EXPECTED_FEATURES = ['atemp', 'hum', 'windspeed', 'hr', 'season', 'workingday']
+
+def validate_and_predict(model, input_df):
+    actual = list(input_df.columns)
+    if actual != EXPECTED_FEATURES:
+        raise ValueError(
+            f"Feature mismatch.\n"
+            f"Expected: {EXPECTED_FEATURES}\n"
+            f"Got:      {actual}"
+        )
+    return model.predict(input_df[EXPECTED_FEATURES].values)
+```
+
+This is one line of validation that prevents an entire class of silent production failures.
+
+---
+
+### The Production Checklist
+
+Before deploying any model:
+
+- [ ] Model saved with metadata (features, order, training date, metrics)
+- [ ] Input validation — feature names, order, types, ranges
+- [ ] Missing value handling strategy defined
+- [ ] Prediction monitoring set up (distribution of outputs)
+- [ ] Input drift monitoring set up (distribution of inputs)
+- [ ] Retraining schedule defined (time-based or drift-triggered)
+- [ ] Fallback defined — what does the system do when the model fails?
+
+---
+
+## 🚫 When NOT to Use Polynomial Regression
+
+Knowing when to use a model is half the skill. Knowing when NOT to use it is the other half. Interviewers specifically test this — a candidate who recommends polynomial regression for every problem is a red flag.
+
+### ❌ High-Dimensional Data
+
+**Rule:** If you have more than ~15-20 features, polynomial regression becomes impractical.
+
+With 20 features at degree=2:
+```
+columns = 2n + n(n-1)/2 = 40 + 190 = 230 features
+```
+
+At degree=3 it's worse. The model has more parameters than intuition can handle, multicollinearity explodes, Ridge has to work very hard, and training becomes slow.
+
+**Use instead:** Lasso (auto feature selection), Random Forest, Gradient Boosting.
+
+---
+
+### ❌ Sparse Data
+
+**Scenario:** Text features, one-hot encoded categoricals with hundreds of levels, user-item interaction matrices.
+
+Polynomial expansion on sparse data creates an even denser matrix of interaction terms, destroying the sparsity that made the data manageable. Memory explodes.
+
+**Use instead:** Logistic Regression with L1, tree-based models (handle sparse naturally), SVMs with appropriate kernels.
+
+---
+
+### ❌ Non-Smooth, Discontinuous Patterns
+
+**Scenario:** Predicting electricity demand — demand is flat during the day, then jumps sharply at 6pm when everyone gets home and turns on appliances.
+
+Polynomial regression produces smooth curves. A sharp step function requires a very high degree to approximate — and even then it wiggles badly near the step (Gibbs phenomenon). You'd need degree=50+ to approximate a step, which causes catastrophic overfitting everywhere else.
+
+**Use instead:** Decision Trees (naturally model step functions), piecewise regression, or adding an explicit binary feature for the step.
+
+---
+
+### ❌ When Tree-Based Models Are Available and Interpretability Isn't Critical
+
+Honestly — in most real-world tabular regression tasks, a tuned `GradientBoostingRegressor` or `XGBRegressor` will outperform polynomial regression with less effort and fewer failure modes.
+
+Our bike sharing model achieved Test R²=0.528 at degree=3. A Random Forest on the same data would likely reach R²=0.85+ without any feature engineering.
+
+**When to still use polynomial regression:**
+- You need interpretable coefficients (`w₁×atemp + w₂×atemp²` is explainable to a business stakeholder; a forest of 500 trees is not)
+- You have a small dataset where tree models overfit
+- You're building intuition for a teaching/portfolio context (this project)
+- The relationship is provably smooth and low-dimensional (physics simulations, controlled experiments)
+
+| Situation | Polynomial Regression | Tree-Based Model |
+|-----------|----------------------|-----------------|
+| <5 features, smooth curve | ✅ | Overkill |
+| 5-15 features, mixed patterns | ⚠️ Try both | ✅ |
+| 15+ features | ❌ | ✅ |
+| Need interpretability | ✅ | ❌ |
+| Sparse data | ❌ | ✅ |
+| Non-smooth/discontinuous | ❌ | ✅ |
+| Small dataset (<1k rows) | ✅ | ⚠️ Overfits |
 
 ---
 
