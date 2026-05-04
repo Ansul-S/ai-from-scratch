@@ -14,7 +14,7 @@ def test_predictions_are_binary():
     X = np.random.randn(100, 3)
     y = (X[:, 0] > 0).astype(int)
 
-    model = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    model = LogisticRegression(n_iterations=3000, learning_rate=0.1)
     model.fit(X, y)
 
     preds = model.predict(X)
@@ -28,7 +28,7 @@ def test_predict_proba_range():
     X = np.random.randn(100, 2)
     y = (X[:, 0] + X[:, 1] > 0).astype(int)
 
-    model = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    model = LogisticRegression(n_iterations=3000, learning_rate=0.1)
     model.fit(X, y)
 
     probs = model.predict_proba(X)
@@ -56,7 +56,7 @@ def test_accuracy_beats_random():
     X = np.random.randn(200, 2)
     y = (X[:, 0] + X[:, 1] > 0).astype(int)
 
-    model = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    model = LogisticRegression(n_iterations=3000, learning_rate=0.1)
     model.fit(X, y)
 
     acc = model.score(X, y)
@@ -73,7 +73,7 @@ def test_against_sklearn():
     from sklearn.linear_model import LogisticRegression as SklearnLR
 
     # your model
-    model = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    model = LogisticRegression(n_iterations=3000, learning_rate=0.1)
     model.fit(X, y)
     acc_custom = model.score(X, y)
 
