@@ -247,11 +247,48 @@ $$\frac{\partial L}{\partial w} = \frac{1}{n} X^T (\hat{y} - y) \qquad \frac{\pa
 
 ---
 
+## 🛠️ Prerequisites & Structure
+
+### Install Dependencies
+
+```bash
+pip install numpy pandas matplotlib seaborn scikit-learn pytest
+```
+
+### Project Directory
+
+```
+03-logistic-regression/
+├── data/                        ← empty — dataset loads from sklearn
+├── results/
+│   ├── class_distribution.png
+│   ├── feature_correlations.png
+│   ├── sigmoid_function.png
+│   ├── loss_curve.png
+│   ├── decision_boundary.png
+│   ├── confusion_matrix.png
+│   └── precision_recall_tradeoff.png
+├── tests/
+│   ├── __init__.py
+│   └── test_solution.py
+├── 01_eda.ipynb                 ← data exploration only
+├── 02_implementation.ipynb     ← building and experimenting
+├── solution.py                  ← all classes live here
+├── train.py                     ← CLI entry point
+└── README.md
+```
+
+> ⚠️ **No `data/` CSV this time.** `load_breast_cancer()` is a sklearn built-in. The `data/` folder exists for structural consistency with other projects but stays empty.
+
+---
+
 ## 🏗️ Build From Scratch
 
 ### Step 1 — The `LogisticRegression` Class (`solution.py`)
 
-#### `__init__` — Store Hyperparameters
+#### Part A — `__init__`: Store Hyperparameters
+
+Start with the constructor. All it does is store settings and initialize placeholders.
 
 ```python
 import numpy as np
@@ -261,50 +298,80 @@ class LogisticRegression:
         self.learning_rate = learning_rate
         self.n_iterations  = n_iterations
         self.threshold     = threshold
-        self.weights       = None
-        self.bias          = None
+        self.weights       = None   # set during fit()
+        self.bias          = None   # set during fit()
 ```
 
-**Why `n_iterations=3000`?** At 1000 iterations, the loss curve has not fully converged — both train and validation loss are still declining. At 3000, both curves flatten to near-zero slope. Empirically verified on the Breast Cancer dataset.
+**Why `n_iterations=3000`?** At 1000 iterations, both train and validation loss are still declining — not converged. At 3000, both curves flatten to near-zero slope. Empirically verified: adding more iterations beyond 3000 reduces loss by <0.01. Engineering judgment: diminishing returns.
 
-#### `_sigmoid` and `_compute_loss`
+**Why `threshold=0.5` as default?** It treats FP and FN as equally costly. For cancer detection you may want to change this — see Step 5 for threshold tuning.
+
+---
+
+#### Part B — `_sigmoid`: The Core Nonlinearity
+
+This is the function that makes logistic regression a classifier, not a regressor. It squashes any real number to (0, 1).
 
 ```python
     def _sigmoid(self, z):
         return 1 / (1 + np.exp(-z))
+```
 
+**Reference points:**
+- `z = 0` → 0.5 (decision boundary — model is maximally uncertain)
+- `z = +5` → 0.993 (very confident: predict benign)
+- `z = -5` → 0.007 (very confident: predict malignant)
+
+**Why one line works for any shape of input:** NumPy broadcasting applies this element-wise to scalars, vectors, and matrices without any loops.
+
+---
+
+#### Part C — `_compute_loss`: Binary Cross-Entropy
+
+Measuring "how wrong" the model is. Extracted as a helper to keep the training loop readable and to centralize the clip operation in one place.
+
+```python
     def _compute_loss(self, y, y_pred):
-        y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)  # prevent log(0) = -inf
+        # Clip to prevent log(0) = -inf — see Failure Analysis for why this matters
+        y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
         return -np.mean(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred))
 ```
 
-Extracting `_compute_loss` as a helper keeps the training loop readable and centralizes the clip operation.
+**What clipping does:** `1e-15` is approximately `10^-15` — effectively zero but safe for `log`. Without this, a single floating-point underflow in sigmoid can produce `log(0) = -inf`, which corrupts the entire loss history.
 
-#### `fit` — The Training Loop
+**Why a helper method and not inline?** Two reasons: (1) the training loop calls it for both train and val loss — no code duplication; (2) any change to the loss formula (e.g., adding a regularization term) only needs updating in one place.
+
+---
+
+#### Part D — `fit`: The Training Loop
+
+This is where learning happens. Every line corresponds directly to the math in the previous section.
 
 ```python
     def fit(self, X, y, X_val=None, y_val=None):
         n_samples, n_features = X.shape
-        self.weights = np.zeros(n_features)
+        self.weights = np.zeros(n_features)  # start at zero → loss starts at 0.693
         self.bias    = 0
 
         self.loss_history     = []
         self.val_loss_history = []
 
         for _ in range(self.n_iterations):
-            # Forward pass — training data only
+            # 1. Forward pass — compute predictions from current weights
             y_pred = self._sigmoid(X @ self.weights + self.bias)
+
+            # 2. Compute and store training loss
             self.loss_history.append(self._compute_loss(y, y_pred))
 
-            # Backward pass — gradients from training data only
+            # 3. Backward pass — compute gradients (math: dL/dw = (1/n) X^T (ŷ - y))
             dw = (1 / n_samples) * X.T @ (y_pred - y)
             db = (1 / n_samples) * np.sum(y_pred - y)
 
-            # Update weights
+            # 4. Update weights in the direction that reduces loss
             self.weights -= self.learning_rate * dw
             self.bias    -= self.learning_rate * db
 
-            # Optional: validation loss post-update — no weight changes from val
+            # 5. Optional: measure validation loss AFTER update (weights don't change from val)
             if X_val is not None and y_val is not None:
                 y_pred_val = self._sigmoid(X_val @ self.weights + self.bias)
                 self.val_loss_history.append(self._compute_loss(y_val, y_pred_val))
@@ -312,22 +379,31 @@ Extracting `_compute_loss` as a helper keeps the training loop readable and cent
         return self
 ```
 
-**Why validation loss after the update?** You want to measure how the updated weights perform on held-out data — not the previous iteration's weights.
+**Why `X_val=None` as optional?** Backward compatible — `model.fit(X_train, y_train)` still works. Validation loss tracking is opt-in.
 
-#### `predict_proba`, `predict`, `score`
+**Why validation loss after the weight update?** You want to measure how the updated weights perform on held-out data — computing it before the update would measure the previous iteration's weights.
+
+---
+
+#### Part E — `predict_proba`, `predict`, `score`
+
+Three methods that use the learned weights for inference.
 
 ```python
     def predict_proba(self, X):
+        # Returns raw probabilities in (0, 1) — same as forward pass
         return self._sigmoid(X @ self.weights + self.bias)
 
     def predict(self, X):
+        # Converts probabilities to class labels using threshold
         return (self.predict_proba(X) >= self.threshold).astype(int)
 
     def score(self, X, y):
+        # Returns proportion of correct predictions (accuracy)
         return np.mean(self.predict(X) == y)
 ```
 
-`predict_proba` decouples probability estimation from the classification decision — call this when tuning the threshold without retraining.
+**The architecture decision:** `predict_proba` is separate from `predict` by design. Threshold is a **policy decision** — it can be changed without retraining. See Step 5 for how this is used in practice.
 
 ---
 
@@ -350,6 +426,8 @@ print(df['target'].value_counts())
 # 1    357   ← benign
 # 0    212   ← malignant
 ```
+
+> ⚠️ **Data Reality Check:** This sklearn dataset is perfectly clean — zero nulls, no duplicates, pre-encoded features, balanced enough to train directly. In a real medical dataset, you would spend 60–80% of your time handling missing values caused by failed imaging sensors, standardizing feature extraction across different hospital equipment, removing duplicate patient records, and hunting for target leakage in derived columns. Do not expect zero null values in the wild. This project teaches the algorithm — real projects teach data cleaning.
 
 **Key EDA findings:**
 
@@ -493,7 +571,65 @@ pytest tests/ -v
 
 ---
 
-## 📊 Visualization Deep Dive
+### Step 5 — Threshold Tuning (`02_implementation.ipynb`)
+
+This is the most important applied step in a cancer detection project. The default threshold of 0.5 is not a clinical decision — it's a mathematical default that assumes FP and FN are equally costly. In cancer screening, they are not.
+
+**The experimentally verified tradeoff on this dataset:**
+
+| Metric | Threshold = 0.5 | Threshold = 0.85 |
+|--------|----------------|-----------------|
+| Accuracy | **98.25%** | 94.74% |
+| Malignant Recall | 97.67% | **100%** |
+| Malignant Precision | **97.67%** | 87.76% |
+| F1 (Malignant) | **97.67%** | 93.48% |
+| Cancers missed (FP*) | 1 | **0** |
+| Unnecessary biopsies (FN*) | **1** | 6 |
+
+*\*FP here = actual malignant predicted as benign. FN here = actual benign predicted as malignant. See Confusion Matrix section for the full explanation of sklearn's label convention.*
+
+**Neither threshold is universally better.** The right choice depends entirely on the cost of each error:
+- Optimize for **overall accuracy and F1** → use threshold **0.5**
+- Optimize for **zero missed cancers** → use threshold **0.85** (accept 6 unnecessary biopsies instead of 1)
+
+Run this sweep yourself to find any threshold:
+
+```python
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+
+probs = model.predict_proba(X_test)
+
+print(f"{'Threshold':<12} {'Accuracy':<12} {'Recall':<12} {'Precision':<12} {'F1':<10} {'Missed':<8} {'FalseAlarm'}")
+print("-" * 80)
+
+for threshold in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9]:
+    preds = (probs >= threshold).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_test, preds).ravel()
+    acc  = accuracy_score(y_test, preds)
+    rec  = recall_score(y_test, preds, pos_label=0, zero_division=0)
+    prec = precision_score(y_test, preds, pos_label=0, zero_division=0)
+    f1   = f1_score(y_test, preds, pos_label=0, zero_division=0)
+    print(f"{threshold:<12.2f} {acc:<12.4f} {rec:<12.4f} {prec:<12.4f} {f1:<10.4f} {fp:<8} {fn}")
+```
+
+This is equivalent to the degree experiment in Project 02 — a systematic sweep across a hyperparameter to understand the tradeoff, then a deliberate choice based on the use case.
+
+**How to pick your threshold in practice:**
+
+```python
+# Find the lowest threshold that achieves a target recall
+target_recall = 0.999
+
+for threshold in np.linspace(0.99, 0.01, 1000):
+    preds = (probs >= threshold).astype(int)
+    recall = recall_score(y_test, preds, pos_label=0, zero_division=0)
+    if recall >= target_recall:
+        prec = precision_score(y_test, preds, pos_label=0, zero_division=0)
+        print(f"Threshold {threshold:.3f} → Recall: {recall:.4f}, Precision: {prec:.4f}")
+        break
+```
+
+> ⚠️ **Threshold selection is a policy decision, not a modeling one.** It can be changed at any time without retraining. This is why `predict_proba` is architecturally separate from `predict` — the model produces probabilities, and humans decide where the line is drawn.
 
 ### `class_distribution.png`
 
@@ -553,45 +689,108 @@ What the 2D plot also reveals: with only 2 of 30 features, there is significant 
 
 ### `confusion_matrix.png`
 
+**Understanding sklearn's label convention first.** When you call `confusion_matrix(y_test, preds).ravel()` → `tn, fp, fn, tp`, sklearn treats class 1 (benign) as the positive class by default. So:
+
+| Variable | sklearn meaning | In plain English |
+|----------|----------------|-----------------|
+| `tn` | actual 0, predicted 0 | Malignant correctly caught ✅ |
+| `fp` | actual 0, predicted 1 | **Malignant missed** — sent home as benign ❌ |
+| `fn` | actual 1, predicted 0 | Benign falsely flagged as malignant ⚠️ |
+| `tp` | actual 1, predicted 1 | Benign correctly cleared ✅ |
+
+**At threshold = 0.5 (experimentally verified):**
+
 ```
                   Predicted
                   Malignant   Benign
-Actual Malignant |    42    |    1   |   ← 1 FN: missed cancer
-       Benign    |     1    |   70   |   ← 1 FP: unnecessary biopsy
+Actual Malignant |    42    |    1   |  ← 1 cancer sent home (FP in sklearn = missed malignant)
+       Benign    |     1    |   70   |  ← 1 unnecessary biopsy (FN in sklearn = false alarm)
 ```
 
-Read in plain English:
-- **42 TN** — malignant tumors correctly flagged → patients get treatment ✅
-- **1 FP** — benign tumor incorrectly flagged → unnecessary biopsy (costly, not dangerous) ⚠️
-- **1 FN** — malignant tumor missed → patient goes home untreated ❌ **dangerous**
-- **70 TP** — benign tumors correctly cleared → patients reassured ✅
+- **42 TN** → malignant correctly caught, patients get treatment ✅
+- **1 FP** → malignant predicted as benign — patient sent home untreated ❌ **dangerous**
+- **1 FN** → benign predicted as malignant — unnecessary biopsy ⚠️ costly but safe
+- **70 TP** → benign correctly cleared ✅
 
-One missed malignant tumor in 43. That patient's cancer goes untreated. FN is the primary concern in medical screening — not because precision doesn't matter, but because the cost asymmetry is extreme.
+One missed malignant tumor in 43. At threshold = 0.85, this becomes zero missed cancers — at the cost of 6 unnecessary biopsies. See Step 5 for the full tradeoff.
+
+```python
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+
+y_pred = model.predict(X_test)
+cm     = confusion_matrix(y_test, y_pred)
+
+disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                               display_labels=['Malignant', 'Benign'])
+fig, ax = plt.subplots(figsize=(6, 5))
+disp.plot(ax=ax, cmap='Blues', colorbar=False)
+plt.title('Confusion Matrix — Threshold = 0.5')
+plt.tight_layout()
+plt.savefig('results/confusion_matrix.png', dpi=150, bbox_inches='tight')
+plt.show()
+
+tn, fp, fn, tp = cm.ravel()
+print(f"Malignant correctly caught (TN): {tn}")
+print(f"Malignant missed — sent home (FP): {fp}  ← DANGEROUS")
+print(f"Benign falsely flagged (FN):       {fn}  ← unnecessary biopsy")
+print(f"Benign correctly cleared (TP):     {tp}")
+```
 
 ### `precision_recall_tradeoff.png`
 
-Plotted for the malignant class (pos_label=0) across thresholds 0.1–0.9:
+Plotted for the malignant class (`pos_label=0`) across thresholds 0.1–0.9. This is the plot that makes threshold selection a data-driven decision rather than a guess.
+
+**What the plot actually shows (verified on this model):**
 
 ```
 Score
-1.00 ─ ●●●●●●●●●●●●●●●●●●●●─────────────── Recall (malignant)
-       │                    |  ↑ recall drops here as threshold rises above 0.5
-0.977 ─ │                   (0.5)
-       │────────────────●●●●●●●●●●●●●────── Precision (malignant)
-       │                               ↑ precision drops at very high thresholds
+1.00 ─ ────────────────────────────── Recall (malignant) at threshold=0.85 → 1.0
+       │
+0.977 ─ ─── Recall at threshold=0.5
+       │
+0.878 ─ ─── Precision at threshold=0.85
+       │
+       │     Precision at 0.5 → 0.977
        └─────────────────────────────────── threshold
-       0.1              0.5             0.9
+       0.1       0.5            0.85    0.9
 ```
 
-**For recall ≥ 0.99:** use threshold 0.85–0.90. This means "only predict benign if the model is 85–90% confident." Borderline cases get flagged as malignant and referred for biopsy — more biopsies, fewer missed cancers.
+**Reading the plot:**
+- At threshold = 0.5: recall = 0.9767, precision = 0.9767, F1 = 0.9767 — balanced and high
+- At threshold = 0.85: recall = 1.0000, precision = 0.8776, F1 = 0.9348 — perfect recall, more false alarms
+
+**The tradeoff is real and has been verified:**
+
+| Threshold | Cancers missed | Unnecessary biopsies | Accuracy |
+|-----------|---------------|---------------------|---------|
+| 0.5 | 1 | 1 | **98.25%** |
+| 0.85 | **0** | 6 | 94.74% |
+
+No universal winner. Choose based on the clinical requirement.
 
 ```python
+from sklearn.metrics import precision_score, recall_score
+
 thresholds = np.linspace(0.1, 0.9, 100)
-probs = model.predict_proba(X_test)
-recalls    = [recall_score(y_test, (probs >= t).astype(int),
-              pos_label=0, zero_division=0) for t in thresholds]
+probs      = model.predict_proba(X_test)
+
 precisions = [precision_score(y_test, (probs >= t).astype(int),
               pos_label=0, zero_division=0) for t in thresholds]
+recalls    = [recall_score(y_test, (probs >= t).astype(int),
+              pos_label=0, zero_division=0) for t in thresholds]
+
+plt.figure(figsize=(8, 4))
+plt.plot(thresholds, precisions, label='Precision (Malignant)', color='#3498db', linewidth=2)
+plt.plot(thresholds, recalls,    label='Recall (Malignant)',    color='#e74c3c', linewidth=2)
+plt.axvline(0.5,  color='gray', linestyle='--', linewidth=1, label='Default threshold (0.5)')
+plt.axvline(0.85, color='orange', linestyle=':', linewidth=1.5, label='High-recall threshold (0.85)')
+plt.title('Precision-Recall Tradeoff vs Threshold (Malignant class)')
+plt.xlabel('Threshold')
+plt.ylabel('Score')
+plt.legend()
+plt.tight_layout()
+plt.savefig('results/precision_recall_tradeoff.png', dpi=150, bbox_inches='tight')
+plt.show()
 ```
 
 ---
@@ -821,23 +1020,32 @@ def predict_safe(model, scaler, X_raw, feature_names):
 
 #### Problem 3: Threshold Policy Change
 
-**Scenario:** Legal requires catching 99.5% of malignant cases, up from 97.7%.
+**Scenario:** Your hospital's policy changes — legal requires catching 100% of malignant cases.
 
-**The fix — no retraining required:**
+**Verified result — no retraining required.**
+
+On this model, threshold = 0.85 achieves:
+- Malignant recall: **1.0000** — zero missed cancers
+- Malignant precision: 0.8776 — 6 unnecessary biopsies out of 49 flagged
+- Overall accuracy: 94.74% (down from 98.25% at threshold 0.5)
+
+This tradeoff was verified empirically — not inferred from a plot. See Step 5 for the full comparison table.
 
 ```python
 probs = model.predict_proba(X_val)
-target_recall = 0.995
+target_recall = 1.0
 
 for threshold in np.linspace(0.99, 0.01, 1000):
-    preds = (probs >= threshold).astype(int)
-    if recall_score(y_val, preds, pos_label=0) >= target_recall:
-        print(f"Threshold {threshold:.3f} achieves target recall")
+    preds  = (probs >= threshold).astype(int)
+    recall = recall_score(y_val, preds, pos_label=0, zero_division=0)
+    if recall >= target_recall:
+        prec = precision_score(y_val, preds, pos_label=0, zero_division=0)
+        print(f"Threshold {threshold:.3f} → Recall: {recall:.4f}, Precision: {prec:.4f}")
         model.threshold = threshold
         break
 ```
 
-Threshold is a **policy decision**, not a model parameter. You can change it without touching the weights. This is why separating `predict_proba` from `predict` matters architecturally.
+Threshold is a **policy decision**, not a model parameter. Change it without touching the weights. This is why separating `predict_proba` from `predict` matters architecturally.
 
 ---
 
