@@ -1,204 +1,494 @@
 # Project 03 — Logistic Regression
 ### Binary Classification: Breast Cancer Detection
 
----
-
-## 🎯 What You'll Learn
-
-- Why linear regression fails for classification tasks
-- How the sigmoid function squashes unbounded outputs into probabilities
-- Binary cross-entropy loss — and why MSE is the wrong choice for classification
-- Gradient descent for logistic regression — derived and implemented from scratch
-- Decision boundaries — what they mean geometrically
-- Confusion matrix — TP, TN, FP, FN and what each costs in the real world
-- Precision vs recall tradeoff — and why the right metric depends on the problem
-- Threshold tuning — moving beyond the default 0.5
-- Class imbalance — how it distorts accuracy and what to do about it
+> **Difficulty:** 🟡 Medium  
+> **Time to complete:** ~8–10 hours  
+> **Phase:** Phase 1 — Classical ML Foundations  
+> **Tags:** `classification` `sigmoid` `binary-cross-entropy` `gradient-descent` `confusion-matrix` `precision-recall` `numpy` `supervised-learning`
 
 ---
 
-## 🆕 New Concepts vs Previous Projects
+## 📌 What You'll Learn
 
-| Concept | Project 01–02 | Project 03 |
-|--------|--------------|------------|
-| Output type | Continuous value | Probability → class |
+By the end of this project you will be able to:
+
+- [ ] Explain precisely why linear regression fails for classification — not just "outputs aren't bounded"
+- [ ] Derive the sigmoid function and explain what it represents geometrically
+- [ ] Implement binary cross-entropy loss from scratch and explain why MSE is mathematically wrong for classification
+- [ ] Build a full `LogisticRegression` class with gradient descent, loss tracking, and validation loss
+- [ ] Interpret a confusion matrix and explain the cost of each error type in context
+- [ ] Navigate the precision-recall tradeoff and tune the decision threshold for a specific use case
+- [ ] Explain why the loss always starts at exactly 0.693 — and what that tells you
+- [ ] Write 5 meaningful pytest unit tests including a sklearn benchmark comparison
+- [ ] Explain every design decision in a technical interview
+
+---
+
+## 🆕 New Concepts vs Project 02
+
+This project makes the jump from regression to classification. Here's what's genuinely new:
+
+| Concept | Project 02 | Project 03 |
+|---------|-----------|-----------|
+| Output type | Continuous value | Probability → binary class |
 | Loss function | MSE | Binary Cross-Entropy |
-| Activation | None (linear) | Sigmoid |
-| Evaluation | R², RMSE | Accuracy, Precision, Recall, F1 |
-| Goal | Minimize residuals | Maximize correct classifications |
-| Decision | Predict a number | Predict a class |
-| New tool | — | Confusion matrix, threshold tuning |
+| Activation | None (linear) | Sigmoid — squashes to (0, 1) |
+| Evaluation metric | R², RMSE | Accuracy, Precision, Recall, F1 |
+| Decision mechanism | Predict a number | Apply threshold to probability |
+| New tool | Bias-variance plot | Confusion matrix, PR tradeoff curve |
+| Error types | Residuals | TP, TN, FP, FN — with different costs |
+| Optimization goal | Minimise squared error | Minimise classification error |
+| Threshold | N/A | Tunable — default 0.5, context-dependent |
 
 ---
 
-## 📊 Dataset
+## 📦 Dataset — Breast Cancer Wisconsin
 
-**Breast Cancer Wisconsin** — `sklearn.datasets.load_breast_cancer()`
+**Source:** `sklearn.datasets.load_breast_cancer()` — no file download needed.  
+**Size:** 569 rows × 30 features
 
-| Property | Value |
-|----------|-------|
-| Rows | 569 |
-| Features | 30 |
-| Target | 0 = Malignant, 1 = Benign |
-| Class distribution | 212 malignant (37.3%), 357 benign (62.7%) |
-| Missing values | None |
+### Class Distribution
+
+| Class | Label | Count | Percentage |
+|-------|-------|-------|-----------|
+| Benign | 1 | 357 | 62.7% |
+| Malignant | 0 | 212 | 37.3% |
+
+> ⚠️ **The dataset is slightly imbalanced.** A dummy classifier that always predicts "benign" would score 62.7% accuracy without learning anything. Always check recall and precision alongside accuracy.
 
 ### Feature Groups
-All 30 features are computed from digitized images of fine needle aspirates of breast masses. They describe characteristics of cell nuclei:
 
-| Group | Features |
-|-------|---------|
-| Radius | mean, standard error, worst |
-| Texture | mean, standard error, worst |
-| Perimeter | mean, standard error, worst |
-| Area | mean, standard error, worst |
-| Smoothness | mean, standard error, worst |
-| Compactness | mean, standard error, worst |
-| Concavity | mean, standard error, worst |
-| Concave points | mean, standard error, worst |
-| Symmetry | mean, standard error, worst |
-| Fractal dimension | mean, standard error, worst |
+All 30 features are computed from digitized images of fine needle aspirates of breast masses. They describe characteristics of cell nuclei present in the image:
+
+| Group | Description | Versions |
+|-------|-------------|---------|
+| Radius | Mean distance from center to perimeter | mean, SE, worst |
+| Texture | Standard deviation of grayscale values | mean, SE, worst |
+| Perimeter | Perimeter of the nucleus | mean, SE, worst |
+| Area | Area of the nucleus | mean, SE, worst |
+| Smoothness | Local variation in radius lengths | mean, SE, worst |
+| Compactness | Perimeter² / area − 1 | mean, SE, worst |
+| Concavity | Severity of concave portions | mean, SE, worst |
+| Concave points | Number of concave portions | mean, SE, worst |
+| Symmetry | Symmetry of nucleus | mean, SE, worst |
+| Fractal dimension | Coastline approximation − 1 | mean, SE, worst |
 
 ### Why No Feature Selection?
-Logistic regression handles high dimensions well — it is not a distance-based algorithm so the curse of dimensionality does not apply. 30 features is fine. However, many features are highly correlated (e.g., radius, perimeter, and area all measure tumor size). This introduces multicollinearity — predictions remain reliable but individual coefficients become unstable and harder to interpret.
+
+Logistic regression handles high dimensions well — it is not a distance-based algorithm, so the curse of dimensionality does not apply the way it does for KNN. 30 features is manageable. However, many features are highly correlated (radius, perimeter, and area all measure tumor size). This introduces **multicollinearity** — predictions remain reliable but individual coefficients become unstable and harder to interpret. We note this in gotchas and move on.
+
+### Why This Dataset?
+
+- Zero friction — `sklearn` built-in, anyone can reproduce with one line
+- Clinical stakes make threshold tuning meaningful — missing a malignant tumor is a different cost than a false alarm
+- Strong signal — 30 features produce ~98% accuracy, confirming the algorithm works
+- Slight class imbalance introduces real-world evaluation nuance
 
 ---
 
 ## 💡 Intuition First
 
-Imagine you are a doctor looking at a scan. You do not output a number like "this tumor is 7.3 dangerous." You output a decision: malignant or benign.
+### Why Linear Regression Fails for Classification
 
-Logistic regression learns to do the same thing — but instead of jumping straight to a class, it first learns a **probability**. "I am 94% confident this is malignant." Then it applies a threshold (default: 0.5) to convert that probability into a class.
+Imagine you have a dataset: tumors with small radius are benign (label 1), tumors with large radius are malignant (label 0). You fit a linear regression line.
 
-The key ingredient is the **sigmoid function** — a mathematical S-curve that squashes any real number into (0, 1). Feed it the same linear combination of features you used in linear regression, and out comes a probability instead of an unbounded number.
+Three things go wrong immediately:
 
-The model learns by asking: "How wrong were my probability predictions?" That wrongness is measured by **binary cross-entropy loss** — a function that punishes confident wrong predictions exponentially. If you say 99% benign for a malignant tumor, you get a massive penalty. If you say 51% benign, the penalty is small.
+**1. Unbounded outputs.** For extreme feature values — a very large tumor radius — linear regression predicts 1.7, 2.3, or -0.4. These are meaningless as probabilities. You can't say "I'm 170% confident this is malignant."
+
+**2. Threshold is arbitrary.** Applying a 0.5 cutoff to a linear model's output has no probabilistic grounding. The model never learned a probability — it learned a number. The decision boundary is based on a fiction.
+
+**3. MSE punishes the wrong things.** MSE minimizes numeric distance from the label. A model that predicts 0.49 for a malignant tumor (label 0) incurs loss `(0.49−0)²=0.24`. A model that predicts 0.01 incurs `(0.01−0)²=0.0001`. MSE massively prefers the 0.01 prediction — correctly. But it rewards this *because the number is small*, not *because we confidently predicted the right class*. The gradient signal is wrong.
+
+### The Key Insight — Wrap It in a Sigmoid
+
+The fix is elegant. Take the exact same linear combination you used in linear regression:
+
+```
+z = w₁×radius + w₂×texture + ... + b
+```
+
+Then wrap it in the sigmoid function:
+
+```
+probability = σ(z) = 1 / (1 + e^(-z))
+```
+
+This single change:
+- Squashes any real number into (0, 1) → interpretable as probability
+- Creates a smooth, differentiable decision boundary at z = 0
+- Enables binary cross-entropy loss — which punishes confident wrong predictions correctly
+
+You're still doing gradient descent. You still have weights and a bias. The only architectural addition is the sigmoid and the loss function.
+
+### The Real-World Analogy
+
+Think of a radiologist. They look at a scan and don't say "this tumor scores 7.3." They say "I'm 95% confident this is malignant." Logistic regression does the same thing — it outputs a confidence score, then applies a threshold to convert it into a decision.
+
+The threshold is the key: by default 0.5, but adjustable. For cancer detection, a radiologist might say "if I'm more than 30% confident, flag it for biopsy." The model's threshold works the same way.
+
+> **Interview-ready line:** *"Logistic regression isn't really regression — it's a linear model with a sigmoid activation and a probabilistic loss function. It outputs calibrated probabilities, not just labels."*
 
 ---
 
-## 📐 Math Section
+## 🔢 How It Works — The Math
 
-### 1. Forward Pass
+### 1. The Sigmoid Function
 
-Linear combination (same as linear regression):
-$$z = \mathbf{X}\mathbf{w} + b$$
+$$\sigma(z) = \frac{1}{1 + e^{-z}}$$
 
-Sigmoid activation:
-$$\hat{y} = \sigma(z) = \frac{1}{1 + e^{-z}}$$
+Three reference points:
+- $z = 0$: $\sigma(0) = 0.5$ — the decision boundary
+- $z \gg 0$: $\sigma(z) \to 1$ — predict benign
+- $z \ll 0$: $\sigma(z) \to 0$ — predict malignant
+
+The derivative has a beautiful closed form:
+
+$$\sigma'(z) = \sigma(z)(1 - \sigma(z))$$
+
+This is not a coincidence — it's why sigmoid and BCE work so cleanly together (the derivative cancels with the BCE gradient, giving a simple update rule).
 
 ### 2. Binary Cross-Entropy Loss
 
 $$L = -\frac{1}{n} \sum_{i=1}^{n} \left[ y_i \log(\hat{y}_i) + (1 - y_i) \log(1 - \hat{y}_i) \right]$$
 
-### 3. Gradients (derived from BCE loss)
+Unpack it for a single sample:
 
-$$\frac{\partial L}{\partial \mathbf{w}} = \frac{1}{n} \mathbf{X}^T (\hat{y} - y)$$
+- If $y=1$ (benign): loss = $-\log(\hat{y})$. When $\hat{y} \to 1$: loss → 0. When $\hat{y} \to 0$: loss → ∞.
+- If $y=0$ (malignant): loss = $-\log(1-\hat{y})$. When $\hat{y} \to 0$: loss → 0. When $\hat{y} \to 1$: loss → ∞.
 
-$$\frac{\partial L}{\partial b} = \frac{1}{n} \sum (\hat{y} - y)$$
+**The key property:** BCE penalises confident wrong predictions exponentially. Predicting 0.99 benign for a malignant tumor: $-\log(1-0.99) = -\log(0.01) \approx 4.6$. Predicting 0.51 for the same tumor: $-\log(0.49) \approx 0.71$. The gradient for the confident mistake is 6× larger — it gets corrected much more aggressively.
 
-### 4. Weight Update
+### 3. Why BCE and Not MSE?
 
-$$\mathbf{w} \leftarrow \mathbf{w} - \alpha \frac{\partial L}{\partial \mathbf{w}}$$
+With MSE, the loss surface for logistic regression is **non-convex** — gradient descent can get stuck in local minima. With BCE, the loss surface is **convex** — guaranteed single global minimum.
 
-$$b \leftarrow b - \alpha \frac{\partial L}{\partial b}$$
+BCE is derived from **maximum likelihood estimation** of a Bernoulli distribution. Given labels $y \in \{0, 1\}$, the likelihood of observing the data is:
 
-### Math-to-Code Table
+$$P(\text{data} | w) = \prod_{i=1}^{n} \hat{y}_i^{y_i} (1-\hat{y}_i)^{1-y_i}$$
+
+Taking the negative log-likelihood gives exactly the BCE formula. This isn't an arbitrary choice — BCE is the mathematically correct loss for a binary classification problem under the probabilistic model that logistic regression assumes.
+
+### 4. Gradient Derivation
+
+Starting from BCE and applying the chain rule through sigmoid:
+
+$$\frac{\partial L}{\partial w} = \frac{\partial L}{\partial \hat{y}} \cdot \frac{\partial \hat{y}}{\partial z} \cdot \frac{\partial z}{\partial w}$$
+
+- $\frac{\partial L}{\partial \hat{y}} = \frac{\hat{y} - y}{\hat{y}(1-\hat{y})}$
+- $\frac{\partial \hat{y}}{\partial z} = \hat{y}(1-\hat{y})$ — the sigmoid derivative cancels with the numerator above
+- $\frac{\partial z}{\partial w} = X$
+
+The beautiful result:
+
+$$\frac{\partial L}{\partial w} = \frac{1}{n} X^T (\hat{y} - y) \qquad \frac{\partial L}{\partial b} = \frac{1}{n} \sum (\hat{y} - y)$$
+
+**These are identical in form to linear regression's gradients.** The sigmoid derivative cancels with the BCE derivative — leaving a clean, simple update rule. This is why logistic regression is so stable to train.
+
+### 5. The Math-to-Code Table
 
 | Equation | Code |
 |----------|------|
-| $z = \mathbf{X}\mathbf{w} + b$ | `z = X @ self.weights + self.bias` |
-| $\sigma(z) = \frac{1}{1+e^{-z}}$ | `1 / (1 + np.exp(-z))` |
-| $L = -\frac{1}{n}\sum[y\log\hat{y} + (1-y)\log(1-\hat{y})]$ | `-np.mean(y * np.log(y_pred) + (1-y) * np.log(1-y_pred))` |
+| $z = Xw + b$ | `z = X @ self.weights + self.bias` |
+| $\hat{y} = \sigma(z) = \frac{1}{1+e^{-z}}$ | `1 / (1 + np.exp(-z))` |
+| clip to prevent $\log(0)$ | `np.clip(y_pred, 1e-15, 1 - 1e-15)` |
+| $L = -\frac{1}{n}\sum[y\log\hat{y} + (1-y)\log(1-\hat{y})]$ | `-np.mean(y * np.log(yp) + (1-y) * np.log(1-yp))` |
 | $\frac{\partial L}{\partial w} = \frac{1}{n}X^T(\hat{y}-y)$ | `(1/n_samples) * X.T @ (y_pred - y)` |
 | $\frac{\partial L}{\partial b} = \frac{1}{n}\sum(\hat{y}-y)$ | `(1/n_samples) * np.sum(y_pred - y)` |
 | $w \leftarrow w - \alpha \nabla w$ | `self.weights -= self.learning_rate * dw` |
-| $\hat{y} \geq \text{threshold} \rightarrow 1$ | `(probs >= self.threshold).astype(int)` |
+| $\hat{y} \geq \text{threshold} \to 1$ | `(probs >= self.threshold).astype(int)` |
+| Recall $= \frac{TP}{TP+FN}$ | `recall_score(y, preds, pos_label=0)` |
+| Precision $= \frac{TP}{TP+FP}$ | `precision_score(y, preds, pos_label=0)` |
 
 ---
 
 ## 🔄 Pipeline Diagram
 
 ```
-Raw Data (569 × 30)
-        │
-        ▼
-train_test_split (80/20, random_state=42)
-        │
-        ▼
-StandardScaler (fit on train, transform both)
-        │
-        ▼
-LogisticRegression.fit(X_train, y_train)
-        │
-    ┌───┴────────────────────┐
-    │   For each iteration:  │
-    │  1. z = Xw + b         │
-    │  2. ŷ = sigmoid(z)     │
-    │  3. loss = BCE(y, ŷ)   │
-    │  4. dw, db = gradients │
-    │  5. update w, b        │
-    └───────────────────────┘
-        │
-        ▼
-predict_proba(X_test) → probabilities ∈ (0, 1)
-        │
-        ▼
-predict(X_test) → apply threshold → {0, 1}
-        │
-        ▼
-Evaluation: Accuracy, Precision, Recall, F1, Confusion Matrix
+┌─────────────────────────────────────────────────────────────────────┐
+│                     TRAINING PIPELINE                               │
+│                                                                     │
+│  load_breast_cancer()  ──►  train_test_split  ──►  StandardScaler  │
+│  569 × 30 features          80% train               fit_transform() │
+│  target: 0=malignant        20% test                mean=0, std=1  │
+│          1=benign                                   train only  ▼  │
+│                                                                     │
+│                          LogisticRegression.fit(X_train, y_train)  │
+│                         ┌──────────────────────────────────────┐   │
+│                         │  For each of n_iterations:           │   │
+│                         │  1. z = X @ w + b                    │   │
+│                         │  2. ŷ = sigmoid(z)                   │   │
+│                         │  3. loss = BCE(y, ŷ)  → loss_history │   │
+│                         │  4. dw = (1/n) X.T @ (ŷ - y)        │   │
+│                         │  5. db = (1/n) sum(ŷ - y)            │   │
+│                         │  6. w -= lr × dw                     │   │
+│                         │  7. b -= lr × db                     │   │
+│                         │  8. [optional] val_loss → history     │   │
+│                         └──────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    PREDICTION PIPELINE                              │
+│                                                                     │
+│  New Data ──► Scaler.transform() ──► predict_proba()               │
+│              (NOT fit_transform!)    sigmoid(X @ w + b)            │
+│                                      probabilities ∈ (0, 1)    ▼  │
+│                                                                     │
+│                           apply threshold (default 0.5)            │
+│                           ──► {0, 1} class predictions             │
+│                                                                     │
+│  Evaluate: Accuracy · Precision · Recall · F1 · Confusion Matrix   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**The two rules visible in this diagram:**
+1. `StandardScaler` uses `fit_transform()` in training, `transform()` only in prediction.
+2. The threshold is applied after `predict_proba()` — decoupling probability estimation from the classification decision. This lets you tune the threshold without retraining.
+
+---
+
+## 🏗️ Build From Scratch
+
+### Step 1 — The `LogisticRegression` Class (`solution.py`)
+
+#### `__init__` — Store Hyperparameters
+
+```python
+import numpy as np
+
+class LogisticRegression:
+    def __init__(self, learning_rate=0.01, n_iterations=3000, threshold=0.5):
+        self.learning_rate = learning_rate
+        self.n_iterations  = n_iterations
+        self.threshold     = threshold
+        self.weights       = None
+        self.bias          = None
+```
+
+**Why `n_iterations=3000`?** At 1000 iterations, the loss curve has not fully converged — both train and validation loss are still declining. At 3000, both curves flatten to near-zero slope. Empirically verified on the Breast Cancer dataset.
+
+#### `_sigmoid` and `_compute_loss`
+
+```python
+    def _sigmoid(self, z):
+        return 1 / (1 + np.exp(-z))
+
+    def _compute_loss(self, y, y_pred):
+        y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)  # prevent log(0) = -inf
+        return -np.mean(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred))
+```
+
+Extracting `_compute_loss` as a helper keeps the training loop readable and centralizes the clip operation.
+
+#### `fit` — The Training Loop
+
+```python
+    def fit(self, X, y, X_val=None, y_val=None):
+        n_samples, n_features = X.shape
+        self.weights = np.zeros(n_features)
+        self.bias    = 0
+
+        self.loss_history     = []
+        self.val_loss_history = []
+
+        for _ in range(self.n_iterations):
+            # Forward pass — training data only
+            y_pred = self._sigmoid(X @ self.weights + self.bias)
+            self.loss_history.append(self._compute_loss(y, y_pred))
+
+            # Backward pass — gradients from training data only
+            dw = (1 / n_samples) * X.T @ (y_pred - y)
+            db = (1 / n_samples) * np.sum(y_pred - y)
+
+            # Update weights
+            self.weights -= self.learning_rate * dw
+            self.bias    -= self.learning_rate * db
+
+            # Optional: validation loss post-update — no weight changes from val
+            if X_val is not None and y_val is not None:
+                y_pred_val = self._sigmoid(X_val @ self.weights + self.bias)
+                self.val_loss_history.append(self._compute_loss(y_val, y_pred_val))
+
+        return self
+```
+
+**Why validation loss after the update?** You want to measure how the updated weights perform on held-out data — not the previous iteration's weights.
+
+#### `predict_proba`, `predict`, `score`
+
+```python
+    def predict_proba(self, X):
+        return self._sigmoid(X @ self.weights + self.bias)
+
+    def predict(self, X):
+        return (self.predict_proba(X) >= self.threshold).astype(int)
+
+    def score(self, X, y):
+        return np.mean(self.predict(X) == y)
+```
+
+`predict_proba` decouples probability estimation from the classification decision — call this when tuning the threshold without retraining.
+
+---
+
+### Step 2 — Exploratory Data Analysis (`01_eda.ipynb`)
+
+```python
+from sklearn.datasets import load_breast_cancer
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+data = load_breast_cancer()
+df   = pd.DataFrame(data.data, columns=data.feature_names)
+df['target'] = data.target  # 0 = malignant, 1 = benign
+
+print(df.shape)                  # (569, 31)
+print(df.isnull().sum().sum())   # 0 — perfectly clean
+print(df['target'].value_counts())
+# 1    357   ← benign
+# 0    212   ← malignant
+```
+
+**Key EDA findings:**
+
+1. **No missing values.** Clean dataset. In production, missing features are common and require explicit handling.
+
+2. **Slight class imbalance (37%/63%).** A dummy classifier scores 62.7% accuracy. Always report recall per class.
+
+3. **`worst concave points` has the strongest negative correlation with target.** Malignant tumors (label 0) exhibit irregular, invasive growth — more concave points. The "worst" version (most extreme value across cell nuclei) is more discriminative than the mean.
+
+4. **High feature-to-feature correlation.** Radius, perimeter, and area measure tumor size in different units — essentially the same signal. Predictions stay reliable, but coefficients are unstable for interpretation.
+
+---
+
+### Step 3 — CLI Training Script (`train.py`)
+
+```python
+import argparse
+import numpy as np
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.linear_model import LogisticRegression as SklearnLR
+from solution import LogisticRegression
+
+def main():
+    parser = argparse.ArgumentParser(description='Train Logistic Regression')
+    parser.add_argument('--learning-rate', type=float, default=0.01)
+    parser.add_argument('--iterations',    type=int,   default=3000)
+    parser.add_argument('--test-size',     type=float, default=0.2)
+    parser.add_argument('--threshold',     type=float, default=0.5)
+    args = parser.parse_args()
+
+    data = load_breast_cancer()
+    X, y = data.data, data.target
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=args.test_size, random_state=42)
+
+    scaler  = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test  = scaler.transform(X_test)
+
+    model = LogisticRegression(
+        learning_rate=args.learning_rate,
+        n_iterations=args.iterations,
+        threshold=args.threshold
+    )
+    model.fit(X_train, y_train)
+
+    sk = SklearnLR(max_iter=3000)
+    sk.fit(X_train, y_train)
+
+    print(f"\nTraining Logistic Regression ({args.iterations} iterations)...")
+    print(f"Train Accuracy:    {accuracy_score(y_train, model.predict(X_train)):.4f}")
+    print(f"Test  Accuracy:    {accuracy_score(y_test, model.predict(X_test)):.4f}")
+    print(f"sklearn benchmark: {sk.score(X_test, y_test):.4f}")
+    print(f"\nClassification Report (Test):")
+    print(classification_report(y_test, model.predict(X_test),
+                                target_names=['Malignant', 'Benign']))
+
+if __name__ == '__main__':
+    main()
+```
+
+**Run from terminal:**
+```bash
+cd projects/phase-1-classical-ml/03-logistic-regression
+python train.py
+python train.py --learning-rate 0.1 --iterations 2000 --threshold 0.4
+python train.py --threshold 0.85    # maximize malignant recall
 ```
 
 ---
 
-## 🔨 Build From Scratch
+### Step 4 — Unit Tests (`tests/test_solution.py`)
 
-### Step 1 — Sigmoid
 ```python
-def _sigmoid(self, z):
-    return 1 / (1 + np.exp(-z))
+import numpy as np
+import sys, os
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from solution import LogisticRegression
+
+def test_predictions_are_binary():
+    """predict() must return only 0 or 1 — no floats, no other values."""
+    np.random.seed(42)
+    X = np.random.randn(100, 3)
+    y = (X[:, 0] > 0).astype(int)
+    model = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    model.fit(X, y)
+    preds = model.predict(X)
+    assert set(np.unique(preds)).issubset({0, 1})
+
+def test_predict_proba_range():
+    """predict_proba() must return values strictly in (0, 1)."""
+    np.random.seed(42)
+    X = np.random.randn(100, 2)
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+    model = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    model.fit(X, y)
+    probs = model.predict_proba(X)
+    assert np.all(probs > 0) and np.all(probs < 1)
+
+def test_loss_decreases():
+    """Loss at end of training must be lower than at the start."""
+    np.random.seed(42)
+    X = np.random.randn(200, 2)
+    y = (X[:, 0] - X[:, 1] > 0).astype(int)
+    model = LogisticRegression(n_iterations=200, learning_rate=0.1)
+    model.fit(X, y)
+    assert model.loss_history[-1] < model.loss_history[0]
+
+def test_accuracy_beats_random():
+    """On linearly separable data, model must exceed 50% accuracy."""
+    np.random.seed(42)
+    X = np.random.randn(200, 2)
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+    model = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    model.fit(X, y)
+    assert model.score(X, y) > 0.5
+
+def test_against_sklearn():
+    """Custom implementation must be within 2% of sklearn's accuracy."""
+    np.random.seed(42)
+    X = np.random.randn(300, 2)
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+    from sklearn.linear_model import LogisticRegression as SklearnLR
+    model    = LogisticRegression(n_iterations=1000, learning_rate=0.1)
+    sk_model = SklearnLR()
+    model.fit(X, y)
+    sk_model.fit(X, y)
+    assert abs(model.score(X, y) - sk_model.score(X, y)) < 0.02
 ```
 
-### Step 2 — Loss Helper
-```python
-def _compute_loss(self, y, y_pred):
-    y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)  # prevent log(0)
-    return -np.mean(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred))
-```
-
-### Step 3 — Training Loop
-```python
-def fit(self, X, y, X_val=None, y_val=None):
-    n_samples, n_features = X.shape
-    self.weights = np.zeros(n_features)
-    self.bias = 0
-    self.loss_history = []
-    self.val_loss_history = []
-
-    for _ in range(self.n_iterations):
-        y_pred = self._sigmoid(X @ self.weights + self.bias)
-        self.loss_history.append(self._compute_loss(y, y_pred))
-
-        dw = (1/n_samples) * X.T @ (y_pred - y)
-        db = (1/n_samples) * np.sum(y_pred - y)
-
-        self.weights -= self.learning_rate * dw
-        self.bias    -= self.learning_rate * db
-
-        if X_val is not None and y_val is not None:
-            y_pred_val = self._sigmoid(X_val @ self.weights + self.bias)
-            self.val_loss_history.append(self._compute_loss(y_val, y_pred_val))
-
-    return self
-```
-
-### Step 4 — Predict
-```python
-def predict_proba(self, X):
-    return self._sigmoid(X @ self.weights + self.bias)
-
-def predict(self, X):
-    return (self.predict_proba(X) >= self.threshold).astype(int)
+**Run:**
+```bash
+pytest tests/ -v
+# 5 passed in 1.42s ✅
 ```
 
 ---
@@ -206,242 +496,520 @@ def predict(self, X):
 ## 📊 Visualization Deep Dive
 
 ### `class_distribution.png`
-Malignant: 212 (37.3%), Benign: 357 (62.7%). The dataset is slightly imbalanced. Not severe enough to require SMOTE or class weights, but enough to make accuracy a misleading metric in isolation. A dummy classifier that always predicts benign would score 62.7% — always check recall alongside accuracy.
+
+The bar chart shows 212 malignant (37.3%) and 357 benign (62.7%). This plot belongs first in any classification notebook — it sets the baseline. A model predicting "benign" for everyone scores **62.7% accuracy without learning anything.** If your model scores below this, it's doing active harm. This is why recall matters more than accuracy in imbalanced medical settings.
 
 ### `feature_correlations.png`
-Features like `worst concave points`, `worst perimeter`, and `worst area` show the strongest negative correlation with the target (remember: 0 = malignant, 1 = benign). These capture the irregular, invasive growth patterns characteristic of malignant tumors. Strongly correlated features span multiple measurement groups — size, shape, and texture all contribute signal.
+
+A horizontal bar chart of Pearson correlation between each feature and the target. The most negative bars (correlating with malignancy) are `worst concave points`, `worst perimeter`, `worst area`. The pattern: features measuring **size** and **shape irregularity** predict malignancy most strongly. Biologically: malignant cells grow uncontrollably (size) and invade tissue irregularly (shape irregularity). The "worst" group (most extreme nucleus measurement) is more discriminative than the "mean" group — outlier cell behavior reveals malignancy better than average behavior.
 
 ### `sigmoid_function.png`
-The S-curve that makes logistic regression work. Any value of z maps to (0, 1). z = 0 → 0.5 (decision boundary). Large positive z → benign. Large negative z → malignant. The steepness at z = 0 is what makes the gradient informative near the boundary.
+
+The S-curve from z=−10 to z=+10. Three things to read from this plot:
+
+1. **The flat tails at z=±8.** Sigmoid output is essentially 0 or 1. Gradient is near-zero here — the model is already very confident and needs little correction.
+2. **The steep center near z=0.** This is where gradient updates are largest — the model is uncertain here and most responsive to correction. This region is the "active learning zone."
+3. **The decision boundary at σ=0.5.** The vertical dashed line at z=0 maps exactly to σ=0.5. This is the geometric meaning of the decision boundary: the hyperplane where $Xw + b = 0$.
+
+```python
+z = np.linspace(-10, 10, 300)
+sigmoid = 1 / (1 + np.exp(-z))
+plt.plot(z, sigmoid, color='#2ecc71', linewidth=2)
+plt.axhline(0.5, color='gray', linestyle='--', label='threshold = 0.5')
+plt.fill_between(z, sigmoid, 0.5, where=(sigmoid > 0.5),
+                 alpha=0.1, color='#2ecc71', label='Predict Benign')
+plt.fill_between(z, sigmoid, 0.5, where=(sigmoid < 0.5),
+                 alpha=0.1, color='#e74c3c', label='Predict Malignant')
+```
 
 ### `loss_curve.png`
-Train and validation loss move in parallel with no divergence — healthy generalization. The steep drop in the first ~300 iterations shows gradient descent making large corrections early. The curve flattens after ~1500 iterations, entering diminishing returns. At 3000 iterations both curves are nearly flat — convergence achieved. Validation loss slightly below training loss is normal for this dataset size.
+
+Train and validation loss plotted together across 3000 iterations.
+
+```
+Loss
+0.693 ─ ●                  ← always starts here (see math section)
+        │\
+        │  \               ← steep drop: correcting large errors
+0.300 ─ │    \
+        │      \──
+0.100 ─ │          ──────── ← convergence: both curves plateau
+        └──────────────────── iterations
+        0    300   1000   3000
+```
+
+**What to look for:**
+- **Two curves tracking closely** → no overfitting. If validation loss rose while training loss fell, that's the signal to add regularization or stop early.
+- **Elbow at ~300 iterations** → fast learning phase ends. Remaining iterations are fine-tuning. Do NOT stop here — loss at the elbow is ~0.25, final loss is ~0.09. That's real accuracy gain.
+- **Still declining slightly at 3000** → diminishing returns, not full convergence. Adding 3000 more iterations reduces loss by <0.01. The engineering judgment: stop here.
+
+> ⚠️ **A training loss curve alone cannot tell you when to stop.** You need validation loss alongside it. The training curve always decreases — it tells you gradient descent is working, not that generalization is improving.
 
 ### `decision_boundary.png`
-Plotted on the first two features (mean radius, mean texture) for 2D visualization. The boundary is a straight line — logistic regression is a linear classifier. Malignant tumors (red) cluster at higher mean radius values; benign (green) cluster lower. Misclassified points near the boundary are expected — two features out of 30 capture limited signal.
+
+Plotted on the first two features (mean radius, mean texture) for 2D visualization. The decision boundary is a **straight line** — logistic regression's fundamental geometric signature. It is always a hyperplane regardless of the number of features.
+
+What the 2D plot also reveals: with only 2 of 30 features, there is significant class overlap. The full 30-feature model achieves 98.2% accuracy because the other 28 features provide additional separating signal invisible in this 2D projection. This is a useful demonstration of the curse of low dimensionality in visualization — 2D projections lie.
 
 ### `confusion_matrix.png`
-- True Negatives (malignant correctly caught): 42
-- False Positives (benign flagged as malignant): 1
-- False Negatives (malignant missed): 1
-- True Positives (benign correctly identified): 70
 
-One missed malignant case in 43. In a medical context, that one FN is a patient whose cancer goes untreated. FP costs an unnecessary biopsy. FN costs a life. Always weight FN more heavily in healthcare applications.
+```
+                  Predicted
+                  Malignant   Benign
+Actual Malignant |    42    |    1   |   ← 1 FN: missed cancer
+       Benign    |     1    |   70   |   ← 1 FP: unnecessary biopsy
+```
+
+Read in plain English:
+- **42 TN** — malignant tumors correctly flagged → patients get treatment ✅
+- **1 FP** — benign tumor incorrectly flagged → unnecessary biopsy (costly, not dangerous) ⚠️
+- **1 FN** — malignant tumor missed → patient goes home untreated ❌ **dangerous**
+- **70 TP** — benign tumors correctly cleared → patients reassured ✅
+
+One missed malignant tumor in 43. That patient's cancer goes untreated. FN is the primary concern in medical screening — not because precision doesn't matter, but because the cost asymmetry is extreme.
 
 ### `precision_recall_tradeoff.png`
-At threshold = 0.5, recall for malignant ≈ 0.977. Recall reaches ≥ 0.99 at threshold ≈ 0.85–0.90 for the 3000-iteration model. More training iterations shift the entire recall curve upward — better class separation at every threshold. The default threshold of 0.5 is a reasonable starting point but should always be tuned for the specific cost of each error type.
+
+Plotted for the malignant class (pos_label=0) across thresholds 0.1–0.9:
+
+```
+Score
+1.00 ─ ●●●●●●●●●●●●●●●●●●●●─────────────── Recall (malignant)
+       │                    |  ↑ recall drops here as threshold rises above 0.5
+0.977 ─ │                   (0.5)
+       │────────────────●●●●●●●●●●●●●────── Precision (malignant)
+       │                               ↑ precision drops at very high thresholds
+       └─────────────────────────────────── threshold
+       0.1              0.5             0.9
+```
+
+**For recall ≥ 0.99:** use threshold 0.85–0.90. This means "only predict benign if the model is 85–90% confident." Borderline cases get flagged as malignant and referred for biopsy — more biopsies, fewer missed cancers.
+
+```python
+thresholds = np.linspace(0.1, 0.9, 100)
+probs = model.predict_proba(X_test)
+recalls    = [recall_score(y_test, (probs >= t).astype(int),
+              pos_label=0, zero_division=0) for t in thresholds]
+precisions = [precision_score(y_test, (probs >= t).astype(int),
+              pos_label=0, zero_division=0) for t in thresholds]
+```
 
 ---
 
-## 📐 Mathematical Derivation
+## 🔬 BCE Loss — The Math Behind Why It Works
 
-### Why BCE Loss, not MSE?
+### Why MSE Fails Geometrically
 
-With MSE, the loss surface for logistic regression is **non-convex** — gradient descent can get stuck in local minima. With BCE, the loss surface is **convex** (guaranteed single global minimum). This is because BCE is derived from maximum likelihood estimation of a Bernoulli distribution, which produces a log-probability objective that is convex when composed with the sigmoid.
+Consider a single malignant sample (y=0). MSE loss at $\hat{y} = 0.99$ (confidently wrong):
 
-### Why Does Loss Start at ln(2) ≈ 0.693?
+$$L_{MSE} = (0.99)^2 = 0.98, \quad \nabla = 2 \times 0.99 = 1.98$$
 
-When weights are initialized to zero, every prediction is exactly 0.5. For a balanced dataset:
+But the effective gradient flowing back through sigmoid: $\sigma'(z) = 0.99 \times 0.01 = 0.0099$. Total: $1.98 \times 0.0099 \approx 0.02$. Almost nothing. The model barely corrects its worst mistake.
+
+BCE fixes this because the $\hat{y}(1-\hat{y})$ in BCE's derivative cancels exactly with $\sigma'(z)$:
+
+$$\frac{\partial L_{BCE}}{\partial z} = \hat{y} - y$$
+
+No vanishing gradient. The more wrong the prediction, the larger the update. This is why BCE + sigmoid is the natural pairing.
+
+### Why Loss Always Starts at 0.693
+
+With zero-weight initialization: $z = 0$ for every sample, sigmoid outputs 0.5 everywhere.
+
 $$L = -[y \log(0.5) + (1-y)\log(0.5)] = -\log(0.5) = \log(2) \approx 0.693$$
 
-This is why every logistic regression trained with zero-weight initialization starts at exactly 0.693 — it is mathematically guaranteed, not a coincidence.
+This is **mathematically guaranteed** regardless of dataset size, number of features, or class balance. A quick implementation sanity check: assert `loss_history[0] ≈ 0.693`. Any other value means your weight initialization or sigmoid has a bug.
 
-### Gradient Derivation
+### Convexity — Why Gradient Descent Always Converges
 
-Starting from BCE loss and applying chain rule through the sigmoid:
-$$\frac{\partial L}{\partial w} = \frac{\partial L}{\partial \hat{y}} \cdot \frac{\partial \hat{y}}{\partial z} \cdot \frac{\partial z}{\partial w}$$
+The BCE loss surface is **strictly convex** — one global minimum, no local minima, no saddle points. Proven by the Hessian:
 
-The beautiful result: $\sigma'(z) = \sigma(z)(1 - \sigma(z))$ cancels with the BCE derivative, leaving the clean gradient $\frac{1}{n}X^T(\hat{y} - y)$ — identical in form to linear regression's gradient.
+$$H = \frac{1}{n} X^T S X \quad \text{where } S = \text{diag}(\hat{y}_i(1-\hat{y}_i))$$
+
+Since $\hat{y}_i \in (0,1)$, all diagonal entries of $S$ are positive. $H$ is positive semi-definite — gradient descent is guaranteed to find the optimal weights. This convexity guarantee is what logistic regression offers that neural networks do not.
 
 ---
 
-## 🐛 Failure Analysis
+## 💥 Failure Analysis — What Broke and What We Learned
 
-### Bug 1 — `log(0)` Explosion
-**What broke:** Loss became `-inf` on the first iteration.
-**Root cause:** Sigmoid outputs values in (0, 1) but never exactly 0 or 1 — except when floating point underflow pushes extremely negative z values to exactly 0.0. `log(0) = -inf`.
-**Fix:** `np.clip(y_pred, 1e-15, 1 - 1e-15)` before computing loss.
-**Lesson:** Always clip probabilities before any log operation. Make this a reflex.
+### Failure 1: Loss Explodes to `nan` — The `log(0)` Problem
 
-### Bug 2 — Name Collision in Tests
-**What broke:** `test_against_sklearn` threw `TypeError: unexpected keyword argument 'n_iterations'`.
-**Root cause:** `from sklearn.linear_model import LogisticRegression` overwrote the custom class imported at the top of the test file. All subsequent instantiations called sklearn's class instead.
-**Fix:** Alias the sklearn import: `from sklearn.linear_model import LogisticRegression as SklearnLR`.
-**Lesson:** Never import two classes with the same name in the same file without aliasing.
+**What happened:**
 
-### Bug 3 — Indentation Error Hiding `predict` Inside `predict_proba`
-**What broke:** `model.predict()` threw `AttributeError: 'LogisticRegression' object has no attribute 'predict'`.
-**Root cause:** `predict` was indented one level too deep — defined as a nested function inside `predict_proba` rather than as a class method.
-**Fix:** Align `def predict` at the same indentation level as `def predict_proba`.
-**Lesson:** Python silently accepts nested function definitions. The bug only surfaces at call time. Always verify method accessibility after writing a new class.
+```python
+loss = -np.mean(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred))
+# RuntimeWarning: divide by zero encountered in log
+# loss_history: [0.693, 0.612, 0.544, ..., nan, nan, nan]
+```
 
-### Bug 4 — Wrong Variable Name in Gradients
-**What broke:** `NameError: name 'n' is not defined`.
-**Root cause:** Gradient formula uses `(1/n)` but the variable defined in `fit` is `n_samples`.
-**Fix:** Replace `n` with `n_samples` in gradient computation.
-**Lesson:** Keep variable names consistent between math notation and code. When in doubt, spell it out: `n_samples` beats `n`.
+After several hundred iterations, loss became `nan` and never recovered. All subsequent predictions were garbage.
+
+**Why it happened:**
+
+When $z$ is very large negative (e.g., $z = -800$), `np.exp(800)` overflows to `inf`, making sigmoid output exactly `0.0`. Then `np.log(0.0) = -inf`. The `nan` propagates through all subsequent arithmetic.
+
+**The fix:**
+
+```python
+y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
+```
+
+`log(1e-15) ≈ -34.5` — a very large penalty, but finite. The model gets strongly corrected rather than crashing.
+
+**The lesson:** Always clip probabilities before any log. Make this a reflex. Centralize the clip in `_compute_loss()` — not sprinkled across the training loop.
+
+---
+
+### Failure 2: Name Collision — sklearn Overwrites Custom Class
+
+**What happened:**
+
+```python
+from solution import LogisticRegression       # custom class
+
+def test_against_sklearn():
+    from sklearn.linear_model import LogisticRegression  # ← OVERWRITES
+    model = LogisticRegression(n_iterations=1000)
+    # TypeError: __init__() got unexpected keyword argument 'n_iterations'
+```
+
+**Why it happened:**
+
+The second import inside the function body overwrote the module-level name `LogisticRegression`. All subsequent code used sklearn's class instead of the custom one. No syntax error — just a wrong class silently substituted.
+
+**The fix:**
+
+```python
+from sklearn.linear_model import LogisticRegression as SklearnLR
+sk_model = SklearnLR()
+```
+
+**The lesson:** Never import two classes with the same name without aliasing one. The bug is invisible until runtime.
+
+---
+
+### Failure 3: `predict` Nested Inside `predict_proba` — Indentation Bug
+
+**What happened:**
+
+```python
+def predict_proba(self, X):
+    ŷ = self._sigmoid(X @ self.weights + self.bias)
+    return ŷ
+        def predict(self, X):          # ← nested — NOT a class method
+        probs = self.predict_proba(X)
+        return (probs >= self.threshold).astype(int)
+# AttributeError: 'LogisticRegression' object has no attribute 'predict'
+```
+
+**Why it happened:** Python silently accepts nested function definitions. `predict` was defined inside `predict_proba`'s scope and inaccessible as a class method.
+
+**The fix:** Align `def predict` at the same indentation level as `def predict_proba`.
+
+**The lesson:** Verify method accessibility after writing a new class: `[m for m in dir(model) if not m.startswith('_')]`. The bug only surfaces at call time.
+
+---
+
+### Failure 4: `fit_transform` on Test Data — Silent Leakage
+
+**What happened:**
+
+```python
+X_test_scaled = scaler.fit_transform(X_test)  # ← BUG
+```
+
+Test accuracy looked identical to the correct version. The bug was invisible.
+
+**Why it matters:** The Breast Cancer dataset is large enough that refitting on test gives nearly identical mean/std. But on a biased test set (different hospital, different demographics), refitting on test data would produce materially wrong predictions — and you'd never know because your reported metrics still look fine.
+
+**The fix:** `scaler.fit_transform(X_train)`, then `scaler.transform(X_test)`. Rule is absolute: **fit on train, transform both.**
+
+---
+
+### Failure 5: `sum()` Instead of `np.sum()`
+
+**What happened:**
+
+```python
+db = (1/n_samples) * sum(ŷ - y)  # Python built-in — works but wrong
+```
+
+No error. Correct result. But Python's built-in `sum` iterates through the array in a Python loop — much slower than `np.sum`'s vectorized C operation. Over 3000 iterations this overhead is measurable.
+
+**The fix:** `np.sum(ŷ - y)`. Always use NumPy functions in NumPy codebases.
 
 ---
 
 ## 🏭 Production Thinking
 
-### Save and Load
+### Saving and Loading the Model
+
 ```python
 import joblib
 
 joblib.dump({
-    'model':      model,
-    'scaler':     scaler,
-    'features':   list(data.feature_names),
-    'trained_at': '2026-05-01',
-    'test_accuracy': 0.982,
-    'threshold':  0.5,
-    'params':     {'learning_rate': 0.01, 'n_iterations': 3000}
-}, 'results/model.joblib')
+    'model':         model,
+    'scaler':        scaler,
+    'features':      list(data.feature_names),
+    'n_features':    30,
+    'threshold':     0.5,
+    'trained_at':    '2026-05-01',
+    'test_accuracy': 0.9825,
+    'params': {'learning_rate': 0.01, 'n_iterations': 3000}
+}, 'results/logistic_regression.joblib')
 
-# Load and predict
-saved = joblib.load('results/model.joblib')
-X_scaled = saved['scaler'].transform(X_new)
-probs = saved['model'].predict_proba(X_scaled)
-preds = (probs >= saved['threshold']).astype(int)
+# Load at prediction time
+saved     = joblib.load('results/logistic_regression.joblib')
+model     = saved['model']
+scaler    = saved['scaler']
+threshold = saved['threshold']
+
+def predict_patient(raw_features_df):
+    X_scaled = scaler.transform(raw_features_df[saved['features']].values)
+    probs    = model.predict_proba(X_scaled)
+    return (probs >= threshold).astype(int), probs
 ```
 
-### Distribution Shift
-The model was trained on 569 samples from a specific hospital imaging protocol. If deployed at a different institution using different imaging equipment or staining techniques, feature distributions will shift. Retraining or fine-tuning on local data is essential before clinical deployment.
+> ⚠️ **Always save metadata alongside the model.** Which features it expects, in what order, which threshold was used, when it was trained. A model file without metadata is a black box that silently fails when the data pipeline changes.
 
-### Missing Values
-This dataset has no missing values. In production, if any of the 30 features are missing (e.g., an imaging artifact), the model will produce unreliable probabilities. Implement a validation layer that flags incomplete inputs before scoring.
+---
 
-### Feature Mismatch
+### What Happens When Things Go Wrong in Production
+
+#### Problem 1: Input Distribution Shift
+
+**Scenario:** Trained on Hospital A's imaging equipment. Hospital B joins the network — their equipment calibrates `mean radius` 15% differently.
+
+**What happens:** Features are shifted relative to the scaler's learned mean. After normalization they land in a different part of feature space. Accuracy drops 98% → 85% with no error raised.
+
+**Defensive detection:**
+
 ```python
-def validate_and_predict(model, input_df, expected_features):
-    if list(input_df.columns) != expected_features:
-        raise ValueError(f"Feature mismatch. Expected: {expected_features}")
-    return model.predict(input_df[expected_features].values)
+def check_distribution(X_new, saved_stats, threshold_stds=2.0):
+    for i, feature in enumerate(saved_stats['feature_names']):
+        drift = abs(X_new[:, i].mean() - saved_stats['train_means'][i])
+        drift /= saved_stats['train_stds'][i]
+        if drift > threshold_stds:
+            print(f"⚠️  Drift in '{feature}': {drift:.2f} standard deviations")
 ```
+
+**The fix:** Retrain periodically. Flag out-of-distribution inputs for human review.
+
+---
+
+#### Problem 2: Missing Features at Inference
+
+**Scenario:** Imaging artifact corrupts concavity measurements. Three features arrive as `NaN`.
+
+**What happens:** `NaN` propagates through scaler → matrix multiply → sigmoid → `NaN >= 0.5` evaluates to `False` → **predicts class 0 (malignant) for everyone.** Silent wrong predictions, no error.
+
+**Defensive prediction:**
+
+```python
+def predict_safe(model, scaler, X_raw, feature_names):
+    X_df = pd.DataFrame(X_raw, columns=feature_names)
+    missing = X_df.columns[X_df.isnull().any()].tolist()
+    if missing:
+        # In cancer detection: always reject, never impute silently
+        raise ValueError(f"Cannot score patient with missing features: {missing}")
+    X_scaled = scaler.transform(X_df.values)
+    probs = model.predict_proba(X_scaled)
+    return (probs >= model.threshold).astype(int), probs
+```
+
+---
+
+#### Problem 3: Threshold Policy Change
+
+**Scenario:** Legal requires catching 99.5% of malignant cases, up from 97.7%.
+
+**The fix — no retraining required:**
+
+```python
+probs = model.predict_proba(X_val)
+target_recall = 0.995
+
+for threshold in np.linspace(0.99, 0.01, 1000):
+    preds = (probs >= threshold).astype(int)
+    if recall_score(y_val, preds, pos_label=0) >= target_recall:
+        print(f"Threshold {threshold:.3f} achieves target recall")
+        model.threshold = threshold
+        break
+```
+
+Threshold is a **policy decision**, not a model parameter. You can change it without touching the weights. This is why separating `predict_proba` from `predict` matters architecturally.
+
+---
 
 ### Production Checklist
-- [ ] Scale features with the same scaler fitted on training data
-- [ ] Validate all 30 features are present before scoring
-- [ ] Choose threshold based on clinical cost of FN vs FP
-- [ ] Log all predictions with confidence scores for audit trail
-- [ ] Monitor feature distributions over time for drift
-- [ ] Never retrain on production labels without clinical validation
+
+- [ ] Model saved with metadata: features, order, threshold, training date, metrics
+- [ ] Input validation: check feature names, count, types before scoring
+- [ ] Missing value strategy defined and documented
+- [ ] Distribution drift monitoring: feature means and stds tracked at inference
+- [ ] Threshold documented and linked to clinical requirement
+- [ ] Threshold review process: who approves changes?
+- [ ] Prediction logging for audit trail (required for medical devices)
+- [ ] Retraining trigger defined: time-based or drift-based?
+- [ ] Fallback defined: what happens when model errors?
 
 ---
 
 ## 🚫 When NOT to Use Logistic Regression
 
-| Scenario | Better Alternative | Why |
-|----------|-------------------|-----|
-| Non-linear decision boundary | SVM (RBF kernel), Random Forest | Logistic regression draws a straight line. Non-linearly separable data needs a curved boundary. |
-| Many irrelevant features | Lasso (L1), Random Forest | Logistic regression includes all features. L1 regularization zeroes out irrelevant ones. |
-| Multi-class classification (>2 classes) | Softmax regression, Random Forest | Binary logistic regression only outputs one probability. Multi-class needs extension. |
-| Extreme class imbalance (1:100+) | XGBoost with `scale_pos_weight`, SMOTE + LR | Severely imbalanced data overwhelms the gradient signal from the minority class. |
-| Small dataset with many features | Ridge/Lasso regularized LR, SVM | High-dimensional small datasets cause overfit without explicit regularization. |
+| Scenario | Why LR Fails | Use Instead |
+|----------|-------------|-------------|
+| Non-linear boundary (donut, XOR, spiral) | Always draws a hyperplane — cannot curve | SVM (RBF), Random Forest, GBM |
+| Many irrelevant features (500+, most are noise) | Includes all features, no auto-selection | Lasso (L1), Random Forest |
+| Extreme class imbalance (1:100+) | Majority class gradient drowns minority | XGBoost + `scale_pos_weight`, SMOTE |
+| Multi-class (>2 classes), no extension | Binary output only | Softmax regression, tree models |
+| Need max accuracy, interpretability unimportant | Trees almost always outperform | GBM, XGBoost, Random Forest |
+| Sparse data (NLP, one-hot hundreds of levels) | Dense polynomial space, memory issues | Sparse LR with L1, Naive Bayes |
+
+### When to Still Use It
+
+- Linear boundary is known or suspected ✅
+- Need calibrated probabilities (well-calibrated by default) ✅
+- Need interpretable coefficients (business stakeholder) ✅
+- Small dataset (<1k rows) where trees overfit ✅
+- Fast training and inference required ✅
 
 ---
 
 ## ⚠️ Common Mistakes & Gotchas
 
-1. **Accuracy is not enough for imbalanced data.** A model predicting "benign" for every patient scores 62.7% on this dataset. Always check recall and precision separately per class.
+1. **Accuracy is not enough for imbalanced data.** Predicting "benign" always scores 62.7% here. Always evaluate precision and recall per class.
 
-2. **The default threshold of 0.5 is rarely optimal.** It assumes equal cost for FP and FN. In cancer detection, FN cost >> FP cost. Always tune the threshold using a precision-recall tradeoff plot.
+2. **The default threshold of 0.5 is almost never optimal.** It assumes equal cost for FP and FN. In cancer detection, they're not equal. Plot a precision-recall curve and choose based on the actual cost of each error type.
 
-3. **Fitting the scaler on test data.** `scaler.fit_transform(X_test)` leaks test statistics into the model. Always `fit` on training data only, `transform` on both.
+3. **Fitting the scaler on test data.** `scaler.fit_transform(X_test)` leaks test statistics. The bug is invisible when test distribution matches train — which it usually does in benchmarks. It surfaces in production. Rule: `fit_transform` on train, `transform` on test, always.
 
-4. **Forgetting to clip probabilities before log.** `log(0) = -inf` and will silently corrupt your loss history. Always use `np.clip(y_pred, 1e-15, 1 - 1e-15)`.
+4. **Not clipping probabilities before log.** `log(0) = -inf`. Even if sigmoid theoretically never outputs exactly 0, floating point underflow makes it happen. Always `np.clip(y_pred, 1e-15, 1 - 1e-15)` before any log operation.
 
-5. **Stopping at the elbow of the loss curve.** The elbow is where learning slows, not where it stops. Stopping there causes underfitting. Plot validation loss alongside training loss to make early stopping decisions correctly.
+5. **Stopping at the loss curve elbow.** The elbow is where fast learning ends, not where learning ends. At the elbow (~300 iterations), loss is ~0.25. At convergence (~3000), loss is ~0.09. That gap is real accuracy gain.
 
-6. **Using `sum()` instead of `np.sum()`.** Python's built-in `sum` works on NumPy arrays but is slower and inconsistent with the rest of NumPy code. Always use `np.sum()`.
+6. **Using `sum()` instead of `np.sum()`.** Python's built-in works but is a Python loop over a NumPy array. Over 3000 training iterations this accumulates. Use `np.sum` everywhere in numerical code.
 
-7. **Importing two classes with the same name.** Importing sklearn's `LogisticRegression` after your own silently overwrites your class. Always alias one: `from sklearn.linear_model import LogisticRegression as SklearnLR`.
+7. **Importing two classes with the same name.** `from sklearn.linear_model import LogisticRegression` overwrites your custom class. Alias: `from sklearn.linear_model import LogisticRegression as SklearnLR`.
 
-8. **Assuming sigmoid output direction matches class label.** In this dataset, high probability = benign (class 1). Lowering the threshold makes it harder to predict benign, so more cases are flagged malignant. The direction of threshold tuning depends entirely on which class is encoded as 1.
-
----
-
-## ❓ 10 Interview Questions
-
-**Q1: Why can't linear regression be used for classification?**
-
-Linear regression produces unbounded outputs — predictions can be negative or greater than 1, which are meaningless as probabilities. The MSE loss treats {0, 1} labels as numeric measurements, so it minimizes numeric error rather than classification error. It can prefer numerically close but wrong-class predictions. For extreme feature values, predictions drift arbitrarily far from [0, 1], making threshold-based decisions unreliable.
-
-**Q2: What is the sigmoid function and why is it used?**
-
-The sigmoid $\sigma(z) = \frac{1}{1+e^{-z}}$ squashes any real number to (0, 1). At z = 0, output is 0.5 — the decision boundary. Large positive z → approaches 1. Large negative z → approaches 0. It provides a natural probabilistic interpretation and has a mathematically convenient derivative: $\sigma'(z) = \sigma(z)(1 - \sigma(z))$.
-
-**Q3: Why use binary cross-entropy instead of MSE?**
-
-Two reasons. First, BCE produces a convex loss surface for logistic regression — gradient descent is guaranteed to find the global minimum. MSE produces a non-convex surface with potential local minima. Second, BCE penalizes confident wrong predictions exponentially (e.g., predicting 0.99 benign for a malignant tumor incurs massive loss), which aligns with how we want the model to behave.
-
-**Q4: Why does the loss always start at ~0.693?**
-
-With zero-weight initialization, every prediction is exactly 0.5. BCE loss of a 0.5 prediction is $-\log(0.5) = \log(2) \approx 0.693$. This is mathematically guaranteed regardless of dataset size or feature count.
-
-**Q5: What is a decision boundary?**
-
-The set of points where the model predicts probability exactly 0.5 — i.e., where $z = Xw + b = 0$. For logistic regression this is always a hyperplane (a straight line in 2D). Points on one side are classified as class 1, points on the other as class 0. Logistic regression is a linear classifier — it cannot learn curved boundaries without feature engineering.
-
-**Q6: What is precision and recall? When does each matter?**
-
-Precision = TP / (TP + FP): of all positive predictions, how many are correct? Recall = TP / (TP + FN): of all actual positives, how many did we catch? Precision matters when false positives are costly (spam detection — you do not want to delete real emails). Recall matters when false negatives are costly (cancer detection — you do not want to miss tumors). They trade off against each other as threshold changes.
-
-**Q7: What is the confusion matrix and what does each cell mean?**
-
-A 2×2 table of prediction outcomes:
-- True Positive (TP): predicted positive, actually positive
-- True Negative (TN): predicted negative, actually negative
-- False Positive (FP): predicted positive, actually negative — Type I error
-- False Negative (FN): predicted negative, actually positive — Type II error
-
-In cancer detection, FN is the most dangerous error — a missed malignant case goes untreated.
-
-**Q8: How does class imbalance affect logistic regression?**
-
-A majority-class dummy classifier can achieve high accuracy without learning anything. The gradient signal from the minority class is overwhelmed by the majority class during training, causing the model to be biased toward predicting the majority class. Fixes include adjusting class weights, oversampling the minority class (SMOTE), undersampling the majority, or choosing metrics like F1 and recall over raw accuracy.
-
-**Q9: What happens if you don't scale features before logistic regression?**
-
-Features with large ranges dominate the gradient updates — the weight for `area` (range ~1000) would update much faster than `smoothness` (range ~0.1). This causes slow, unstable convergence and potentially missing the optimal solution entirely. StandardScaler normalizes all features to zero mean and unit variance, ensuring balanced gradient contributions.
-
-**Q10: How would you decide the threshold in production?**
-
-By constructing a precision-recall tradeoff curve and choosing the threshold that minimizes the cost function for your specific use case. In cancer detection, the cost of a false negative (missed cancer) far exceeds the cost of a false positive (unnecessary biopsy). So you would optimize for high recall on the malignant class, accepting lower precision, and choose the threshold from the curve where recall meets your clinical requirement.
+8. **Confusing threshold direction with malignant recall.** In this dataset 1=benign. `predict` outputs 1 when `prob >= threshold`. Raising the threshold makes it harder to predict benign → more cases flagged malignant → **raising** threshold increases malignant recall. Direction depends on which class is encoded as 1.
 
 ---
 
-## 🏋️ Exercises
+## 🎯 10 Interview Questions
 
-### 🟢 Beginner
-1. Train the model with `learning_rate=0.001` and `n_iterations=5000`. How does the loss curve change compared to the default? Does accuracy improve?
-2. Change the threshold to 0.3 and 0.7. How do precision and recall change for the malignant class? Explain the direction of each change.
-3. Remove `StandardScaler` from the pipeline. What happens to training loss and accuracy? Why?
+<details>
+<summary><strong>Q1: Why can't you use linear regression for binary classification?</strong></summary>
 
-### 🟡 Intermediate
-4. Add L2 regularization to the gradient: $\frac{\partial L}{\partial w} = \frac{1}{n}X^T(\hat{y} - y) + \frac{\lambda}{n}w$. Implement `lambda_` as a hyperparameter and test values `[0.01, 0.1, 1.0]`. What happens to accuracy and weights?
-5. Implement a `cross_validate` method that performs k-fold cross-validation and returns mean and standard deviation of accuracy across folds.
-6. Plot the ROC curve (TPR vs FPR across all thresholds) and compute AUC. Compare to sklearn's implementation.
+**Answer:** Three reasons. First, linear regression produces unbounded outputs — predictions can be −2.4 or 1.7, which are meaningless as probabilities. Second, applying a 0.5 threshold to these outputs has no probabilistic grounding — the model never learned a probability, just a number. Third, MSE minimizes numeric distance from labels, not classification accuracy. The gradient signal is wrong: at extreme probabilities, the MSE gradient is nearly zero when composed with sigmoid — the model barely learns from its most confident mistakes. BCE fixes all three: it's derived from maximum likelihood, its gradient doesn't vanish at extremes, and the output is a calibrated probability.
 
-### 🔴 Advanced
-7. Implement mini-batch gradient descent as an option in `fit`. Add a `batch_size` parameter. Compare convergence speed to full-batch gradient descent.
-8. Extend the class to handle multi-class classification using the One-vs-Rest (OvR) strategy. Test on the Iris dataset (3 classes).
-9. Implement early stopping: monitor validation loss and stop training when it has not improved for `patience` consecutive iterations. Add `patience` as a hyperparameter.
+</details>
+
+<details>
+<summary><strong>Q2: Explain the sigmoid function and what it represents geometrically.</strong></summary>
+
+**Answer:** The sigmoid $\sigma(z) = \frac{1}{1+e^{-z}}$ squashes any real number to (0, 1). Reference points: z=0 → 0.5 (decision boundary), large positive z → 1, large negative z → 0. Geometrically, z is the signed distance from the decision boundary hyperplane, scaled by the weights. Points far from the boundary get probabilities close to 0 or 1. Points near the boundary get probabilities close to 0.5. The sigmoid converts "distance from boundary" into "confidence of prediction." Its derivative is $\sigma'(z) = \sigma(z)(1-\sigma(z))$, which cancels perfectly with the BCE gradient to give a clean update rule.
+
+</details>
+
+<details>
+<summary><strong>Q3: Why is binary cross-entropy the right loss for logistic regression?</strong></summary>
+
+**Answer:** Two reasons — practical and theoretical. Practical: BCE penalises confident wrong predictions exponentially. Predicting 0.99 benign for a malignant tumor costs `−log(0.01) ≈ 4.6`. Predicting 0.51 costs `−log(0.49) ≈ 0.71`. The gradient for the confident mistake is 6× larger. MSE's gradient nearly vanishes at extreme probabilities due to sigmoid's flat tails — the model barely corrects its worst mistakes. Theoretical: BCE is the negative log-likelihood of a Bernoulli distribution — the mathematically correct loss for binary classification. It produces a convex loss surface, guaranteeing a global minimum for gradient descent.
+
+</details>
+
+<details>
+<summary><strong>Q4: Why does the loss always start at exactly 0.693?</strong></summary>
+
+**Answer:** With zero-weight initialization, z=0 for every sample, so sigmoid outputs 0.5 everywhere. BCE loss for any label with $\hat{y}=0.5$: $-[y\log(0.5)+(1-y)\log(0.5)] = -\log(0.5) = \log(2) \approx 0.693$. This is mathematically guaranteed regardless of dataset size, number of features, or class balance. It's a quick implementation sanity check: assert `loss_history[0] ≈ 0.693`. Any other starting value indicates a bug in weight initialization or sigmoid.
+
+</details>
+
+<details>
+<summary><strong>Q5: What is the decision boundary and what shape does it take?</strong></summary>
+
+**Answer:** The decision boundary is the set of points where the model predicts exactly 0.5 probability — where $Xw + b = 0$. For logistic regression this is always a **hyperplane** — a straight line in 2D, a flat plane in 3D. Logistic regression is a linear classifier. It cannot represent curved boundaries without feature engineering. The perpendicular distance from any point to the hyperplane determines confidence: farther away means higher probability. This geometric interpretation explains why logistic regression fails on non-linearly separable data — no single hyperplane can separate a donut pattern, for example.
+
+</details>
+
+<details>
+<summary><strong>Q6: Explain precision, recall, and the F1 score. When does each matter?</strong></summary>
+
+**Answer:** Precision = TP/(TP+FP): of all positive predictions, how many were actually positive? Recall = TP/(TP+FN): of all actual positives, how many did we catch? F1 = 2×(P×R)/(P+R): harmonic mean — penalizes extremes more than arithmetic mean. Precision matters when FP is costly: spam detection (don't delete real emails). Recall matters when FN is costly: cancer screening (don't miss tumors). F1 matters when both must be balanced. The harmonic mean is appropriate because a model with precision=1, recall=0.01 is useless — the arithmetic mean flatters it at 0.505, the harmonic mean correctly scores it at 0.02.
+
+</details>
+
+<details>
+<summary><strong>Q7: What is the confusion matrix and how do you decide which error type matters more?</strong></summary>
+
+**Answer:** A 2×2 table mapping predicted vs actual classes. TN=correctly predicted negatives, TP=correctly predicted positives, FP=wrong positive predictions (Type I error), FN=missed positives (Type II error). The cost of FP vs FN is entirely context-dependent and requires domain knowledge: cancer screening — FN means untreated cancer (life-threatening), FP means unnecessary biopsy (costly but safe) → optimize for recall. Spam detection — FN means spam in inbox (minor), FP means deleted real email (severe) → optimize for precision. The confusion matrix shows you the counts. Deciding which error is worse is a business and ethical decision the model alone cannot make.
+
+</details>
+
+<details>
+<summary><strong>Q8: How does the decision threshold work and how do you choose it in production?</strong></summary>
+
+**Answer:** `predict_proba` returns a probability in (0, 1). Threshold converts this to a label: prob ≥ threshold → class 1, else → class 0. Default 0.5 assumes equal cost for FP and FN — almost never true. To choose: plot precision and recall for the class of interest across all thresholds from 0 to 1. Find the threshold that satisfies your constraint. For cancer detection requiring ≥99% malignant recall: find the minimum threshold achieving this recall on the validation set, accept the precision at that point. Importantly — threshold selection is a policy decision, not a modeling one. It can be changed without retraining, which is why separating `predict_proba` from `predict` is architecturally important.
+
+</details>
+
+<details>
+<summary><strong>Q9: What is class imbalance and how does it affect logistic regression?</strong></summary>
+
+**Answer:** Class imbalance occurs when one class significantly outnumbers the other. Effects: (1) A dummy classifier predicting majority achieves high accuracy — accuracy becomes misleading. (2) BCE loss receives more gradient signal from the majority class, causing the model to bias toward predicting majority. (3) Minority class predictions become unreliable. Fixes for severe imbalance (1:100+): `class_weight='balanced'` (scales minority gradient contributions proportionally), SMOTE oversampling (creates synthetic minority samples), threshold adjustment (lower threshold to flag more positives), or using precision-recall AUC instead of ROC AUC (ROC AUC is misleadingly optimistic under severe imbalance — it doesn't reflect the low base rate of positives).
+
+</details>
+
+<details>
+<summary><strong>Q10: Your train and validation loss curves are very close together. What does that tell you, and what would overfitting and underfitting look like?</strong></summary>
+
+**Answer:** Two curves tracking closely means the model generalizes well — it's learning the real signal, not noise, so it performs similarly on held-out data. For underfitting: both train AND validation loss would be high and flat — near-random accuracy, model hasn't learned the pattern. Fix: more iterations, higher learning rate, or more expressive features. For overfitting: train loss low and still decreasing while validation loss plateaus or rises. Model memorized training noise. Fix: regularization (L1/L2), more data, or fewer parameters. In this project with 455 training samples and only 31 parameters (30 weights + bias), overfitting is geometrically impossible — the model is massively underdetermined. The close train/val curves confirm this theoretical expectation empirically.
+
+</details>
 
 ---
 
-## ➡️ What's Next
+## 🏋️ Exercises & Challenges
 
-- **Project 04 — K-Nearest Neighbours:** A non-parametric classifier that makes no assumptions about data distribution. See how distance-based methods compare to logistic regression.
-- **Project 05 — Naive Bayes:** A probabilistic classifier based on Bayes' theorem. Extremely fast and effective for text classification.
+**🟢 Beginner**
+- [ ] Run `train.py --threshold 0.3` and `train.py --threshold 0.8`. Print the classification report for both. How does malignant recall change in each direction? Explain the mechanism.
+- [ ] Remove `StandardScaler` from the pipeline. What happens to convergence speed and final accuracy? Why?
+- [ ] Change `n_iterations` to 500, 1000, 2000, 3000. Plot all four loss curves on the same figure. At what iteration count do they visually converge?
+- [ ] Initialize weights with `np.random.randn(n_features) * 0.01` instead of zeros. Does the starting loss change? Why or why not?
+
+**🟡 Intermediate**
+- [ ] Add L2 regularization to the gradient: $\nabla w = \frac{1}{n}X^T(\hat{y}-y) + \frac{\lambda}{n}w$. Add `lambda_` as a hyperparameter. Test values `[0, 0.01, 0.1, 1.0]`. Does accuracy improve?
+- [ ] Implement a `cross_validate` method: split training data into k folds, train on k−1, validate on 1, report mean ± std accuracy across folds.
+- [ ] Plot the ROC curve (TPR vs FPR across all thresholds) using `predict_proba` output. Compute AUC. Compare with the precision-recall curve — when is each more informative?
+- [ ] Add a `batch_size` parameter to `fit` for mini-batch gradient descent. Compare convergence speed vs full-batch on this dataset.
+
+**🔴 Advanced**
+- [ ] Implement early stopping: monitor validation loss and stop when it hasn't improved for `patience` consecutive iterations. Add `patience=50` as a hyperparameter.
+- [ ] Extend `LogisticRegression` to multi-class using One-vs-Rest: train k binary classifiers, predict the class with highest probability. Test on Iris (3 classes) and compare to sklearn.
+- [ ] Implement Platt scaling to calibrate probabilities: fit a second logistic regression on the raw model outputs. Plot reliability diagrams before and after calibration.
+- [ ] Implement SGD (batch_size=1). Compare convergence trajectories with full-batch. Visualize the noisy vs smooth loss curves side by side.
+
+---
+
+## 🔗 What's Next
+
+- **[04 — K-Nearest Neighbours →](../04-knn/)** — A distance-based, non-parametric classifier. No training — just memorize the data. Compare how the decision boundary looks vs logistic regression's hyperplane, and discover when distance metrics fail.
+- **[05 — Naive Bayes →](../05-naive-bayes/)** — A probabilistic classifier based on Bayes' theorem. Extremely fast, great for text. Compare probabilistic frameworks.
 
 ---
 
 ## 📚 Further Reading
 
-1. [Logistic Regression — Stanford CS229 Notes](https://cs229.stanford.edu/notes2022fall/main_notes.pdf) — Full mathematical derivation with MLE framing
-2. [Cross-Entropy Loss — Deep Learning Book, Chapter 6](https://www.deeplearningbook.org/) — Why BCE is the natural loss for probabilistic classifiers
-3. [Precision-Recall vs ROC Curves — Davis & Goadrich (2006)](https://dl.acm.org/doi/10.1145/1143844.1143874) — When PR curves are more informative than ROC
-4. [Sklearn Logistic Regression Documentation](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html) — Production implementation with all solvers
-5. [Breast Cancer Wisconsin Dataset](https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic)) — Original UCI repository with feature descriptions
+1. [Stanford CS229 — Logistic Regression Notes](https://cs229.stanford.edu/notes2022fall/main_notes.pdf) — Full MLE derivation + gradient derivation from first principles
+2. [Deep Learning Book — Chapter 6](https://www.deeplearningbook.org/) — Why cross-entropy is the natural loss for classifiers with sigmoid/softmax outputs
+3. [Precision-Recall vs ROC Curves — Davis & Goadrich (2006)](https://dl.acm.org/doi/10.1145/1143844.1143874) — When PR curves are more informative than ROC under class imbalance
+4. [sklearn LogisticRegression docs](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html) — Production implementation: solvers, regularization options, multi-class
+5. [Breast Cancer Wisconsin Dataset — UCI](https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic)) — Original paper and feature descriptions
+
+---
+
+<p align="center">
+  <strong>ai-from-scratch</strong> · Project 03 · Logistic Regression<br>
+  Built with curiosity · Shared with the community
+</p>
