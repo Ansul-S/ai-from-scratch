@@ -25,7 +25,7 @@ Every project follows the same structure: intuition first, math second, code thi
 |---|---------|----------|------------|
 | 01 | [Linear Regression](./projects/phase-1-classical-ml/01-linear-regression/) | Gradient descent, MSE, R² | 🟢 Easy |
 | 02 | [Polynomial Regression](./projects/phase-1-classical-ml/02-polynomial-regression/) | Feature engineering, overfitting | 🟢 Easy |
-| 03 | Logistic Regression | Sigmoid, log loss, decision boundary | 🟢 Easy |
+| 03 | [Logistic Regression](./projects/phase-1-classical-ml/03-logistic-regression/) | Sigmoid, log loss, decision boundary | 🟢 Easy |
 | 04 | K-Nearest Neighbours | Distance metrics, hyperparameters | 🟢 Easy |
 | 05 | Naive Bayes | Bayes theorem, conditional probability | 🟢 Easy |
 | 06 | Decision Tree | Information gain, Gini impurity | 🟡 Medium |
