@@ -123,4 +123,4 @@ def test_against_sklearn():
         f"Custom KNN accuracy ({custom_accuracy:.4f}) differs from "
         f"sklearn accuracy ({sklearn_accuracy:.4f}) by {difference:.4f}, "
         f"which is more than 2%"
-    )g
+    )
