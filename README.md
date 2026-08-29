@@ -52,7 +52,7 @@ Every project follows the same structure: intuition first, math second, code thi
 |---|---------|----------|------------|
 | 20 | Transformer Attention | Self-attention, Q/K/V | 🔴 Hard |
 | 21 | Fine-tune a Small LLM | LoRA, instruction tuning | 🔴 Hard |
-| 22 | RAG Pipeline from Scratch | Embeddings, vector search | 🔴 Hard |
+| 22 | [RAG Pipeline from Scratch](./projects/phase-4-modern-ai/22-rag-pipeline/) | Embeddings, vector search, cross-encoder reranking, grounded generation | 🔴 Hard |
 
 ### Phase 5 — MLOps & Production
 | # | Project | Concepts | Difficulty |
